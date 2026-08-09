@@ -1,9 +1,13 @@
 # Sentinel — Autonomous AppSec Agent
-[![CI](https://github.com/rahulpaul-07/sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/rahulpaul-07/sentinel/actions/workflows/ci.yml)
+[![CI](https://github.com/rahulpaul-07/sentinel-Autonomous-AppSec-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/rahulpaul-07/sentinel-Autonomous-AppSec-Agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Sentinel is an AI agent that **finds, proves, and fixes** security vulnerabilities in source code. Unlike a typical AI scanner that just *claims* bugs, Sentinel **proves** each one by generating a proof-of-concept exploit and running it inside a locked-down sandbox — so what it reports is what's actually exploitable.
 
 Inspired by the cyber-reasoning systems from DARPA's AI Cyber Challenge (2025), scoped as a single-developer build.
+
+<!-- TODO: record a ~20s capture of `python scan.py targets/vulnerable_app` reaching a
+     CONFIRMED finding, save as docs/demo.gif, and embed it here. -->
 
 ---
 
@@ -54,7 +58,7 @@ change, which is what the harness exists to prove.
 
 > Note: still a small, hand-labeled benchmark. The value is the methodology (every
 > change is measurable) and the demonstrated improvement, not the headline number.
-> Expanding with real-world CVEs is the top roadmap item.measurable), not the headline number. Expanding the benchmark with real-world CVEs is the top roadmap item.
+> Expanding the benchmark with real-world CVEs is the top roadmap item.
 
 ---
 
