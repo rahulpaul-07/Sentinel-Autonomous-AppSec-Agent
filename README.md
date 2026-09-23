@@ -54,6 +54,7 @@ actually demonstrated. Every candidate is graded and the grade is reported.
 | `LINE_PROVEN` | marker + reported line executed | The specific claim was demonstrated against this code. **Only these are counted as findings, and only these are patched.** |
 | `CLASS_ONLY` | marker + reported line never ran | The vulnerability class is exploitable in the abstract; this line was never shown to be. Reported, never counted. |
 | `UNPROVEN` | no marker after N self-correcting attempts | Could not be demonstrated. |
+| `ENV_INCOMPLETE` | the target's own imports failed in the sandbox | **Nothing was tested.** The sandbox image lacks a third-party package the target imports, so the exploit died before it could try. |
 | `UNREACHABLE` | rejected by static analysis, before any model call | No path from attacker input to that line, or the call is already made safely. |
 
 Collapsing `CLASS_ONLY` into "confirmed" is exactly the overstatement this project exists
@@ -237,6 +238,17 @@ cd site && npm install && npm run build   # outputs to ../docs
 
 ## Limitations & roadmap
 
+* **The sandbox only has the standard library.** It runs a minimal Python image with
+  the network disabled, so a target importing Flask, Django or any third-party package
+  dies at its own import line before the exploit runs. Those claims are graded
+  `ENV_INCOMPLETE` rather than `UNPROVEN`, because "we could not test this" and "the
+  exploit failed" are different statements and conflating them would overstate the run.
+  Building a per-target image from the project's own requirements is the fix, and is on
+  the roadmap. Note the asymmetry this creates with v1: the old validator reproduced
+  vulnerability patterns in isolation and so never needed the target's dependencies at
+  all. The new target-executing validator is strictly more honest and will report
+  **lower** recall on dependency-heavy targets. That is the measurement getting better,
+  not the tool getting worse.
 * **The tracer records that a line executed, not that tainted data flowed through it.**
   A line can execute with benign input. Combined with the static taint gate this is
   strong evidence — it is not a dataflow proof. Closing that gap is the top roadmap item.

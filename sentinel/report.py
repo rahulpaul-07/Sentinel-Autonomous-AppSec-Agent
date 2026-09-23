@@ -56,6 +56,8 @@ _TIER = {
     "class_only": ("classonly", "CLASS ONLY", "Exploit succeeded, but the reported line never ran."),
     "unproven": ("rejected", "UNPROVEN", "The exploit never succeeded."),
     "unreachable": ("gated", "NO PATH", "Static analysis found no attacker path to this line."),
+    "env_incomplete": ("envgap", "NOT TESTABLE",
+                       "The sandbox lacks a dependency the target imports, so nothing was tested."),
 }
 
 
@@ -87,6 +89,19 @@ def _witness_block(val: dict) -> str:
     return f'<div class="witness"><span class="wlabel">Execution witness</span>{body}</div>'
 
 
+def _envgap_block(val: dict) -> str:
+    """Name the package the sandbox was missing, so the gap is actionable."""
+    mod = val.get("missing_module")
+    if not mod:
+        return ""
+    return (
+        '<div class="gate"><span class="wlabel">Sandbox gap</span>'
+        f"The target imports <code>{_esc(mod)}</code>, which is not installed in the "
+        "sandbox image. The exploit stopped at that import, so this claim was never "
+        "tested.</div>"
+    )
+
+
 def _gate_block(scanned: dict) -> str:
     """For gated-out candidates, show why the static gate rejected them."""
     r = scanned.get("reachability")
@@ -109,6 +124,7 @@ def _finding_card(scanned: dict, patches_by_file: dict[str, str]) -> str:
     if val and val.get("poc_code"):
         attempts = val.get("attempts", 1)
         poc_block = f"""
+        {_envgap_block(val)}
         {_witness_block(val)}
         <details class="drawer">
           <summary>Proof-of-concept exploit <span class="muted">&middot; {attempts} attempt(s)</span></summary>
@@ -151,7 +167,8 @@ def render_html(report: ScanReport, title: str = "Sentinel Scan Report") -> str:
     counts = data["counts"]
     patches_by_file = {p["file"]: p["diff"] for p in data["patches"]}
 
-    _TIER_ORDER = {"line_proven": 0, "class_only": 1, "unproven": 2, "unreachable": 3}
+    _TIER_ORDER = {"line_proven": 0, "class_only": 1, "env_incomplete": 2,
+                   "unproven": 3, "unreachable": 4}
     scanned_sorted = sorted(
         data["scanned"],
         key=lambda s: (
@@ -169,6 +186,7 @@ def render_html(report: ScanReport, title: str = "Sentinel Scan Report") -> str:
 
     proven_cards = cards("line_proven")
     classonly_cards = cards("class_only")
+    envgap_cards = cards("env_incomplete")
     other_cards = cards("unproven") + cards("unreachable")
 
     sev = counts["by_severity"]
@@ -202,9 +220,20 @@ def render_html(report: ScanReport, title: str = "Sentinel Scan Report") -> str:
         else ""
     )
 
+    n_envgap = counts.get("not_testable", 0)
+    envgap_section = (
+        f'<h2 class="section muted-h">Not testable <span class="count">{n_envgap}</span></h2>'
+        f'<p class="hint">The exploit could not run because the sandbox image is missing a '
+        f'third-party package the target imports. Nothing was proven <em>or</em> disproven &mdash; '
+        f'these are reported separately rather than counted as failed exploits, because calling '
+        f'them unproven would claim a test that never happened.</p>{envgap_cards}'
+        if envgap_cards
+        else ""
+    )
+
     other_section = (
         f'<h2 class="section muted-h">Not demonstrated <span class="count">'
-        f'{counts["rejected"]}'
+        f'{counts.get("not_demonstrated", counts["rejected"])}'
         f'</span></h2>'
         f'<p class="hint">Flagged by the hunter, then either rejected by the static reachability '
         f'gate before any model call ({n_gated}) or never demonstrated by a working exploit. '
@@ -213,7 +242,7 @@ def render_html(report: ScanReport, title: str = "Sentinel Scan Report") -> str:
         else ""
     )
 
-    sections = proven_section + classonly_section + other_section
+    sections = proven_section + classonly_section + envgap_section + other_section
 
     return f"""<!doctype html>
 <html lang="en" data-theme="dark">
@@ -292,6 +321,7 @@ html,body {{ margin:0; padding:0; background:var(--bg); color:var(--text);
 .card.classonly {{ border-left:3px solid var(--high); }}
 .card.rejected {{ opacity:.82; border-left:3px solid var(--line); }}
 .card.gated {{ opacity:.72; border-left:3px solid var(--accent2); }}
+.card.envgap {{ opacity:.82; border-left:3px solid var(--micro); }}
 .card-head {{ display:flex; align-items:center; justify-content:space-between; gap:12px; }}
 .card-title {{ display:flex; align-items:center; gap:11px; }}
 .card-title h3 {{ margin-left:2px; }}
@@ -310,6 +340,7 @@ html,body {{ margin:0; padding:0; background:var(--bg); color:var(--text);
 .status-rejected {{ color:var(--muted); background:var(--panel2); border:1px solid var(--line); }}
 .status-gated {{ color:var(--accent2); background:color-mix(in srgb,var(--accent2) 14%,transparent);
   border:1px solid color-mix(in srgb,var(--accent2) 40%,var(--line)); }}
+.status-envgap {{ color:var(--micro); background:var(--bg2); border:1px solid var(--line); }}
 .witness,.gate {{ font-size:13px; color:var(--muted); background:var(--bg2);
   border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:10px 0 2px; }}
 .wlabel {{ display:block; color:var(--micro); font-size:10.5px; text-transform:uppercase;
@@ -363,6 +394,7 @@ footer a {{ color:var(--muted); text-decoration:none; border-bottom:1px dotted v
     <div class="tile"><div class="n">{counts["candidates"]}</div><div class="l">Candidates</div></div>
     <div class="tile bad"><div class="n">{n_proven}</div><div class="l">Line proven</div></div>
     <div class="tile warn"><div class="n">{n_class}</div><div class="l">Class only</div></div>
+    <div class="tile"><div class="n">{n_envgap}</div><div class="l">Not testable</div></div>
     <div class="tile"><div class="n">{n_gated}</div><div class="l">No path</div></div>
     <div class="tile good"><div class="n">{counts["patched_files"]}</div><div class="l">Files fixed</div></div>
   </div>

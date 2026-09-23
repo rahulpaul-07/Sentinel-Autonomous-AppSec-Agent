@@ -75,6 +75,7 @@ html,body { margin:0; padding:0; background:var(--bg); color:var(--text);
 .card.classonly { border-left:3px solid var(--high); }
 .card.rejected { opacity:.82; border-left:3px solid var(--line); }
 .card.gated { opacity:.72; border-left:3px solid var(--accent2); }
+.card.envgap { opacity:.82; border-left:3px solid var(--micro); }
 .card-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .card-title { display:flex; align-items:center; gap:11px; }
 .card-title h3 { margin-left:2px; }
@@ -93,6 +94,7 @@ html,body { margin:0; padding:0; background:var(--bg); color:var(--text);
 .status-rejected { color:var(--muted); background:var(--panel2); border:1px solid var(--line); }
 .status-gated { color:var(--accent2); background:color-mix(in srgb,var(--accent2) 14%,transparent);
   border:1px solid color-mix(in srgb,var(--accent2) 40%,var(--line)); }
+.status-envgap { color:var(--micro); background:var(--bg2); border:1px solid var(--line); }
 .witness,.gate { font-size:13px; color:var(--muted); background:var(--bg2);
   border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:10px 0 2px; }
 .wlabel { display:block; color:var(--micro); font-size:10.5px; text-transform:uppercase;
@@ -138,14 +140,15 @@ footer a { color:var(--muted); text-decoration:none; border-bottom:1px dotted va
       <span>Target <b class="mono">targets/vulnerable_app</b></span>
       <span>Model <b class="mono">groq/openai/gpt-oss-120b</b></span>
       <span>Runtime <b>12.34s</b></span>
-      <span>Generated <b>2026-09-23 05:07 UTC</b></span>
+      <span>Generated <b>2026-09-23 15:39 UTC</b></span>
     </div>
   </header>
 
   <div class="tiles">
-    <div class="tile"><div class="n">4</div><div class="l">Candidates</div></div>
+    <div class="tile"><div class="n">5</div><div class="l">Candidates</div></div>
     <div class="tile bad"><div class="n">2</div><div class="l">Line proven</div></div>
     <div class="tile warn"><div class="n">1</div><div class="l">Class only</div></div>
+    <div class="tile"><div class="n">1</div><div class="l">Not testable</div></div>
     <div class="tile"><div class="n">1</div><div class="l">No path</div></div>
     <div class="tile good"><div class="n">1</div><div class="l">Files fixed</div></div>
   </div>
@@ -164,6 +167,7 @@ footer a { color:var(--muted); text-decoration:none; border-bottom:1px dotted va
           <span class="conf" title="Hunter confidence">conf 95%</span>
         </div>
         <p class="desc">username from request flows unsanitized into an SQL string.</p>
+        
         
         
         <div class="witness"><span class="wlabel">Execution witness</span><span class="wyes">reached app.py:33</span> during the exploit.</div>
@@ -200,6 +204,7 @@ print(&#x27;SENTINEL_PWNED&#x27;)
         <p class="desc">an admin password is written directly in source.</p>
         
         
+        
         <div class="witness"><span class="wlabel">Execution witness</span><span class="wyes">reached app.py:18</span> during the exploit.</div>
         <details class="drawer">
           <summary>Proof-of-concept exploit <span class="muted">&middot; 2 attempt(s)</span></summary>
@@ -234,6 +239,7 @@ print(&#x27;SENTINEL_PWNED&#x27;)
         <p class="desc">pickle.loads on attacker-supplied bytes.</p>
         
         
+        
         <div class="witness"><span class="wlabel">Execution witness</span><span class="wno">never executed any code in app.py</span> &mdash; the exploit reproduced the class in isolation.</div>
         <details class="drawer">
           <summary>Proof-of-concept exploit <span class="muted">&middot; 1 attempt(s)</span></summary>
@@ -243,6 +249,31 @@ print(&#x27;SENTINEL_PWNED&#x27;)
 </pre>
           <div class="micro-label">Sandbox output</div>
           <pre class="code out">SENTINEL_PWNED</pre>
+        </details>
+        
+      </article><h2 class="section muted-h">Not testable <span class="count">1</span></h2><p class="hint">The exploit could not run because the sandbox image is missing a third-party package the target imports. Nothing was proven <em>or</em> disproven &mdash; these are reported separately rather than counted as failed exploits, because calling them unproven would claim a test that never happened.</p>
+      <article class="card envgap">
+        <div class="card-head">
+          <div class="card-title">
+            <span class="sev sev-critical">critical</span>
+            <h3>Command Injection</h3>
+          </div>
+          <span class="status status-envgap" title="The sandbox lacks a dependency the target imports, so nothing was tested.">NOT TESTABLE</span>
+        </div>
+        <div class="loc"><span class="mono">app.py:45</span>
+          <span class="conf" title="Hunter confidence">conf 100%</span>
+        </div>
+        <p class="desc">host from the request is appended to a shell command passed to os.system.</p>
+        
+        
+        <div class="gate"><span class="wlabel">Sandbox gap</span>The target imports <code>flask</code>, which is not installed in the sandbox image. The exploit stopped at that import, so this claim was never tested.</div>
+        
+        <details class="drawer">
+          <summary>Proof-of-concept exploit <span class="muted">&middot; 3 attempt(s)</span></summary>
+          <pre class="code poc">import app
+print(&#x27;SENTINEL_PWNED&#x27;)</pre>
+          <div class="micro-label">Sandbox output</div>
+          <pre class="code out">ModuleNotFoundError: No module named &#x27;flask&#x27;</pre>
         </details>
         
       </article><h2 class="section muted-h">Not demonstrated <span class="count">1</span></h2><p class="hint">Flagged by the hunter, then either rejected by the static reachability gate before any model call (1) or never demonstrated by a working exploit. They are shown so nothing is silently dropped.</p>

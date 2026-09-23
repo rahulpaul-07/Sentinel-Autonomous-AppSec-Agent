@@ -14,6 +14,12 @@ candidate on what was proven about it, and reports the grade.
     UNPROVEN      An exploit was attempted and never produced the success marker.
                   The claim could not be demonstrated.
 
+    ENV_INCOMPLETE  The exploit could not run to completion because the sandbox
+                  lacks a third-party dependency the target imports. This is NOT a
+                  failed exploit: nothing was tested. Reporting it as UNPROVEN would
+                  claim we tried and the claim did not hold, when in fact we never
+                  got far enough to try.
+
     CLASS_ONLY    The exploit printed the marker, but the reported line never
                   executed while it ran. This proves the vulnerability *class* is
                   exploitable in principle -- it does NOT prove this line is.
@@ -39,6 +45,7 @@ class Evidence(str, Enum):
 
     UNREACHABLE = "unreachable"
     UNPROVEN = "unproven"
+    ENV_INCOMPLETE = "env_incomplete"
     CLASS_ONLY = "class_only"
     LINE_PROVEN = "line_proven"
 
@@ -53,6 +60,16 @@ class Evidence(str, Enum):
         return self in (Evidence.CLASS_ONLY, Evidence.LINE_PROVEN)
 
     @property
+    def is_testable(self) -> bool:
+        """Did we actually get to run a real test of this claim?
+
+        False for ENV_INCOMPLETE. Counting an untested claim as a failed one would
+        overstate what the run established, in the same way that counting a
+        class-only proof as a finding overstates it in the other direction.
+        """
+        return self is not Evidence.ENV_INCOMPLETE
+
+    @property
     def is_line_proven(self) -> bool:
         """Was the *specific reported location* demonstrated? The strict reading."""
         return self is Evidence.LINE_PROVEN
@@ -62,6 +79,7 @@ class Evidence(str, Enum):
         return {
             Evidence.UNREACHABLE: "Unreachable",
             Evidence.UNPROVEN: "Unproven",
+            Evidence.ENV_INCOMPLETE: "Not testable",
             Evidence.CLASS_ONLY: "Class only",
             Evidence.LINE_PROVEN: "Line proven",
         }[self]
@@ -71,6 +89,10 @@ class Evidence(str, Enum):
         return {
             Evidence.UNREACHABLE: "No path found from attacker-controlled input to this line.",
             Evidence.UNPROVEN: "The exploit never succeeded.",
+            Evidence.ENV_INCOMPLETE: (
+                "The sandbox is missing a dependency the target imports, so the "
+                "exploit could not run. Nothing was proven or disproven."
+            ),
             Evidence.CLASS_ONLY: "Exploit succeeded, but the reported line never ran.",
             Evidence.LINE_PROVEN: "Exploit succeeded and the reported line executed.",
         }[self]
@@ -82,5 +104,6 @@ class Evidence(str, Enum):
             Evidence.LINE_PROVEN: 3,
             Evidence.CLASS_ONLY: 2,
             Evidence.UNPROVEN: 1,
+            Evidence.ENV_INCOMPLETE: 1,
             Evidence.UNREACHABLE: 0,
         }[self]

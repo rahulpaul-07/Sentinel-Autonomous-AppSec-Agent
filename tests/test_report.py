@@ -78,8 +78,8 @@ def test_section_counts_match_the_cards_shown():
     )
     assert int(headers["Line-proven"]) == len(report.line_proven)
     assert int(headers["Class-only"]) == len(report.class_only)
-    assert int(headers["Not demonstrated"]) == len(report.rejected)
-    # And every rejected finding really does get a card rendered.
+    assert int(headers["Not demonstrated"]) == len(report.not_demonstrated)
+    # And every such finding really does get a card rendered.
     assert int(headers["Not demonstrated"]) >= d["counts"]["gated_out"]
 
 

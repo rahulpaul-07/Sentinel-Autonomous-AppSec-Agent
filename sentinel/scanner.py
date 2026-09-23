@@ -78,6 +78,8 @@ class ScannedFinding:
             }
             if self.validation.witness is not None:
                 d["validation"]["witness"] = self.validation.witness.to_dict()
+            if self.validation.missing_module:
+                d["validation"]["missing_module"] = self.validation.missing_module
         return d
 
 
@@ -107,14 +109,32 @@ class ScanReport:
         return [s for s in self.scanned if s.confirmed]
 
     @property
+    def not_testable(self) -> list[ScannedFinding]:
+        """Claims we never got to test, because the sandbox lacked a dependency."""
+        return [s for s in self.scanned if s.evidence is Evidence.ENV_INCOMPLETE]
+
+    @property
     def gated_out(self) -> list[ScannedFinding]:
         """Rejected by static analysis before any model call."""
         return [s for s in self.scanned if s.evidence is Evidence.UNREACHABLE]
 
     @property
     def rejected(self) -> list[ScannedFinding]:
-        """Everything not confirmed by an exploit: unproven + gated out."""
+        """Everything not confirmed by an exploit, including the untestable ones."""
         return [s for s in self.scanned if not s.confirmed]
+
+    @property
+    def not_demonstrated(self) -> list[ScannedFinding]:
+        """Claims we actually tested and could not demonstrate.
+
+        Deliberately narrower than `rejected`: a claim the sandbox could not test at
+        all is reported under its own tier, so counting it here would inflate the
+        number of exploits that genuinely failed.
+        """
+        return [
+            s for s in self.scanned
+            if not s.confirmed and s.evidence is not Evidence.ENV_INCOMPLETE
+        ]
 
     def severity_counts(self) -> dict[str, int]:
         """Severity breakdown over line-proven findings only."""
@@ -136,6 +156,7 @@ class ScanReport:
             f"  Gated out (no path):  {len(self.gated_out)}\n"
             f"  Line-proven:          {len(self.line_proven)}\n"
             f"  Class-only:           {len(self.class_only)}\n"
+            f"  Not testable:         {len(self.not_testable)}\n"
             f"  Files with fixes:     {len(self.patches)}"
         )
 
@@ -150,7 +171,9 @@ class ScanReport:
                 "class_only": len(self.class_only),
                 "confirmed": len(self.confirmed),
                 "gated_out": len(self.gated_out),
+            "not_testable": len(self.not_testable),
                 "rejected": len(self.rejected),
+            "not_demonstrated": len(self.not_demonstrated),
                 "patched_files": len(self.patches),
                 "by_severity": self.severity_counts(),
                 "by_evidence": self.evidence_counts(),

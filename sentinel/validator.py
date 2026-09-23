@@ -25,6 +25,7 @@ any ground-truth label -- the finding's own reported location is the target.
 from __future__ import annotations
 
 import base64
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +36,29 @@ from sentinel.evidence import Evidence
 from sentinel.witness import build_harness, parse_witness, strip_witness, WitnessResult
 
 MARKER = "SENTINEL_PWNED"
+
+# `ModuleNotFoundError: No module named 'flask'` and friends.
+_MISSING_MODULE_RE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
+
+
+def missing_dependency(output: str, target_module: str) -> str | None:
+    """Name the third-party module the sandbox lacks, if that is why a PoC died.
+
+    The distinction that matters here is WHICH module is missing:
+
+      * the target's own module  -> the code under test was never mounted into the
+        container. That is an infrastructure fault on our side, and it must stay
+        UNPROVEN so it stays visible rather than being excused as an environment
+        gap.
+      * anything else            -> the target imports a third-party package that
+        the sandbox image does not have. The exploit never got to run, so grading
+        it UNPROVEN would claim we tested something we did not.
+    """
+    for match in _MISSING_MODULE_RE.finditer(output or ""):
+        module = match.group(1).split(".")[0]
+        if module and module != target_module:
+            return module
+    return None
 
 # Where the sandbox mounts the target codebase (read-only). The harness adds this
 # to sys.path so the PoC can import the real module under test.
@@ -105,6 +129,7 @@ class ValidationResult:
     output: str                   # exploit output, witness record stripped out
     attempts: int
     witness: WitnessResult | None = None
+    missing_module: str = ""     # set when the sandbox lacked a dependency
 
     @property
     def line_proven(self) -> bool:
@@ -166,14 +191,20 @@ class Validator:
             if attempt < self.max_attempts:
                 poc = self._fix_poc(finding, code, poc, clean_output)
 
+        # Every attempt failed. Before calling the claim unproven, check whether we
+        # ever actually got to test it: if the target could not even be imported
+        # because the sandbox lacks one of its dependencies, nothing was tested and
+        # saying "unproven" would overstate the run.
+        missing = missing_dependency(clean_output, self._module_name(finding.file))
         return ValidationResult(
             finding=finding,
             confirmed=False,
-            evidence=Evidence.UNPROVEN,
+            evidence=Evidence.ENV_INCOMPLETE if missing else Evidence.UNPROVEN,
             poc_code=poc,
             output=clean_output,
             attempts=self.max_attempts,
             witness=witness,
+            missing_module=missing or "",
         )
 
     # -- prompting --------------------------------------------------------

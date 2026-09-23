@@ -102,6 +102,18 @@ def main() -> int:
                 f = s.finding
                 print(f"    [CLASS ONLY] {f.vuln_class}  {f.file}:{f.line}")
 
+    if report.not_testable:
+        mods = sorted({
+            s.validation.missing_module
+            for s in report.not_testable
+            if s.validation and s.validation.missing_module
+        })
+        print(
+            f"\n  {len(report.not_testable)} candidate(s) could not be tested: the sandbox "
+            f"image lacks {', '.join(mods) if mods else 'a dependency'} that the target imports."
+        )
+        print("  These are not failed exploits -- nothing was proven or disproven.")
+
     if report.gated_out:
         print(
             f"\n  {len(report.gated_out)} candidate(s) rejected by static analysis "
