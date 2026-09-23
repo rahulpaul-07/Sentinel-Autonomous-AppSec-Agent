@@ -124,13 +124,36 @@ _WITNESS_PREFIX = {prefix!r}
 _hits = set()
 _err = ""
 
+# Resolve the target to an absolute real path and match traced frames against THAT.
+# Matching on basename alone is unsafe: dependencies ship files with the same
+# common names (flask/app.py, for one), so importing a library would attribute
+# hundreds of its lines to the file under test and manufacture a proof.
+try:
+    _TARGET_REAL = os.path.realpath(_TARGET_PATH)
+except Exception:
+    _TARGET_REAL = _TARGET_PATH
+_HAVE_REAL = os.path.isfile(_TARGET_REAL)
+
+def _is_target(filename):
+    if not filename:
+        return False
+    if _HAVE_REAL:
+        try:
+            return os.path.realpath(filename) == _TARGET_REAL
+        except Exception:
+            return False
+    # Only if the target path could not be resolved do we fall back to basename,
+    # and then we still require it not to live inside an installed package.
+    if os.path.basename(filename) != _TARGET_BASENAME:
+        return False
+    return "site-packages" not in filename and "dist-packages" not in filename
+
 # Lines that execute merely because a module is imported -- `def`/`class` headers
 # and their decorators. Counting these as a witness would let a PoC that does
-# nothing but `import target` appear to have reached a nearby sink, which is a
-# false proof of exactly the kind this module exists to prevent.
+# nothing but `import target` appear to have reached a nearby sink.
 _import_time_lines = set()
 try:
-    with open(_TARGET_PATH, "r", encoding="utf-8", errors="replace") as _fh:
+    with open(_TARGET_REAL, "r", encoding="utf-8", errors="replace") as _fh:
         _tree = ast.parse(_fh.read())
     for _n in ast.walk(_tree):
         if isinstance(_n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -142,8 +165,7 @@ except Exception:
 
 def _tracer(frame, event, arg):
     if event == "line":
-        fn = frame.f_code.co_filename
-        if os.path.basename(fn) == _TARGET_BASENAME:
+        if _is_target(frame.f_code.co_filename):
             _hits.add(frame.f_lineno)
     return _tracer
 
@@ -173,6 +195,7 @@ _record = {{
     "line_executed": any(abs(n - _TARGET_LINE) <= {window} for n in _witness_lines),
     "executed_lines": _lines[:200],
     "import_time_lines_ignored": sorted(_import_time_lines)[:200],
+    "resolved_target": _TARGET_REAL if _HAVE_REAL else "",
     "error": _err[-400:],
 }}
 sys.stdout.write("\\n" + _WITNESS_PREFIX + json.dumps(_record) + "\\n")

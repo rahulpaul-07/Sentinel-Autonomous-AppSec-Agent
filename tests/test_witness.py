@@ -212,3 +212,50 @@ def test_import_time_lines_are_recorded_for_transparency(target_dir):
     # `def setup` (3) and `def login` (9) are import-time, not exploitation.
     assert 3 in payload["import_time_lines_ignored"]
     assert 9 in payload["import_time_lines_ignored"]
+
+
+def test_same_named_dependency_file_cannot_forge_a_proof(tmp_path):
+    """Regression: a dependency file with the same basename must not be traced.
+
+    The tracer originally matched frames by basename. Real projects import
+    libraries that ship common filenames -- flask/app.py being the obvious one --
+    so tracing a target called app.py attributed hundreds of the library's lines
+    to it and manufactured a LINE_PROVEN grade for a PoC that only did `import`.
+
+    Here a fake package ships its own app.py with many lines. Executing it must
+    contribute nothing to the witness for the real target.
+    """
+    target_dir = tmp_path / "project"
+    target_dir.mkdir()
+    (target_dir / "app.py").write_text(
+        "def login(username):\n"
+        "    query = \"SELECT * FROM users WHERE name = '\" + username + \"'\"\n"
+        "    return query\n",
+        encoding="utf-8",
+    )
+
+    # A dependency that also contains an app.py, with a line at the sink number.
+    dep = tmp_path / "site-packages" / "framework"
+    dep.mkdir(parents=True)
+    (dep / "__init__.py").write_text("from . import app\n", encoding="utf-8")
+    (dep / "app.py").write_text("\n".join(f"X{i} = {i}" for i in range(1, 30)), encoding="utf-8")
+
+    poc = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(tmp_path / 'site-packages')!r})\n"
+        "import framework\n"           # executes the OTHER app.py
+        "print('SENTINEL_PWNED')\n"
+    )
+    harness = build_harness(
+        poc_code=poc, target_file="app.py", target_line=2,
+        mount=str(target_dir), workdir=str(target_dir),
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", harness], capture_output=True, text=True, timeout=60
+    )
+    w = parse_witness(proc.stdout, "app.py", 2)
+
+    assert "SENTINEL_PWNED" in proc.stdout   # the shallow signal is satisfied
+    assert w.available
+    assert not w.file_executed               # the real target never ran
+    assert not w.line_executed               # so no line proof, despite the marker
