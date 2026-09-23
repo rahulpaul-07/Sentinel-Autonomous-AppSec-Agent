@@ -1,6 +1,6 @@
 """Unit tests for the metrics math. Fast, deterministic, no LLM needed."""
 
-from sentinel.evaluation import Metrics
+from sentinel.metrics import Metrics
 
 
 def test_precision_recall_f1():

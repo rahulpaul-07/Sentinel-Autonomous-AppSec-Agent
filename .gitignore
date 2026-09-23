@@ -8,3 +8,8 @@ __pycache__/
 
 # OS / editor junk
 .DS_Store
+
+# Site build scaffolding (the BUILT site is committed to docs/ for GitHub Pages)
+site/node_modules/
+site/.ssr-tmp/
+sentinel_appsec.egg-info/
