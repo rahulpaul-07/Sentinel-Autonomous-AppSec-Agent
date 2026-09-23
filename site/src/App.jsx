@@ -1,12 +1,15 @@
 import { useRef } from "react";
 import { motion } from "motion/react";
 import { ShieldCheck, Github, ArrowRight, Check, X, Minus } from "lucide-react";
+import { useState } from "react";
 
 import { Terminal, AnimatedSpan, TypingAnimation } from "@/components/ui/terminal";
 import { BorderBeam } from "@/components/ui/border-beam";
 import { NumberTicker } from "@/components/ui/number-ticker";
 import { DotPattern } from "@/components/ui/dot-pattern";
 import { AnimatedBeam } from "@/components/ui/animated-beam";
+import { Particles } from "@/components/ui/particles";
+import { ProofLab } from "@/components/proof-lab";
 import { cn } from "@/lib";
 import { REPO, RUNS, GATE, PIPELINE, TIERS, LIMITS } from "./data";
 
@@ -59,6 +62,7 @@ function Hero() {
   return (
     <header className="relative overflow-hidden pb-14 pt-16 sm:pb-20 sm:pt-24">
       <DotPattern className="[mask-image:radial-gradient(420px_circle_at_center,white,transparent)] opacity-60" cr={0.7} />
+      <Particles className="absolute inset-0 -z-10" quantity={70} ease={70} color="#7c5cff" />
       <div className="relative mx-auto max-w-5xl px-5 sm:px-8">
         <motion.span
           initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
@@ -222,6 +226,19 @@ if rows:
 }
 
 /* ------------------------------------------------------------ contribution */
+
+function Lab() {
+  return (
+    <Section
+      id="lab"
+      label="Try it"
+      title="Run the four exploits and watch the trace."
+      lede="Same target, same accused line, four different proofs. Two of them print the success marker without ever exercising the reported code. Pick one and run it."
+    >
+      <ProofLab />
+    </Section>
+  );
+}
 
 function Contribution() {
   return (
@@ -528,6 +545,7 @@ export default function App() {
       <div id="top" />
       <Hero />
       <Problem />
+      <Lab />
       <Contribution />
       <Pipeline />
       <Gate />
