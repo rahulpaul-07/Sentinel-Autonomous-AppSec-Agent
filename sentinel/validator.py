@@ -1,20 +1,25 @@
 """
 sentinel/validator.py
 ---------------------
-The Validator: turns a Finding from a CLAIM into PROOF -- or rejects it.
+The Validator: turns a Finding from a CLAIM into graded EVIDENCE -- or rejects it.
 
 For each finding it:
-  1. asks the LLM to write a self-contained proof-of-concept (PoC) that prints a
-     unique marker (SENTINEL_PWNED) only if the vulnerability is real,
-  2. runs that PoC in the locked-down sandbox,
-  3. if it fails, feeds the failure BACK to the model and lets it try again
+  1. asks the LLM to write a proof-of-concept (PoC) that IMPORTS the module under
+     test and drives the real vulnerable function, printing a unique marker
+     (SENTINEL_PWNED) only if the vulnerability is real,
+  2. wraps the PoC in a line-tracing harness and runs it in the locked-down
+     sandbox with the target mounted read-only,
+  3. if the marker is absent, feeds the failure BACK to the model and retries
      (self-correction) -- up to max_attempts times,
-  4. confirms the finding only if some attempt prints the marker.
+  4. grades the outcome on the evidence ladder:
+        marker + reported line executed -> LINE_PROVEN   (this line is exploitable)
+        marker + reported line not run  -> CLASS_ONLY    (only the class is shown)
+        no marker                       -> UNPROVEN
 
-The self-correction loop is a core agentic pattern: the agent observes the result
-of its action and, if it failed, uses that feedback to improve the next attempt.
-This recovers true positives a single shot would miss, while still rejecting any
-claim that can never be demonstrated (keeping false positives near zero).
+The distinction in step 4 is the point of the whole system. A marker-only check
+treats "I reproduced SQL injection somewhere" and "I exploited THIS line" as the
+same result; they are not. The line witness keeps them separate without needing
+any ground-truth label -- the finding's own reported location is the target.
 """
 
 from __future__ import annotations
@@ -25,13 +30,19 @@ from dataclasses import dataclass
 from sentinel.llm import LLMClient
 from sentinel.sandbox import Sandbox
 from sentinel.hunter import Finding
+from sentinel.evidence import Evidence
+from sentinel.witness import build_harness, parse_witness, strip_witness, WitnessResult
 
 MARKER = "SENTINEL_PWNED"
 
+# Where the sandbox mounts the target codebase (read-only). The harness adds this
+# to sys.path so the PoC can import the real module under test.
+MOUNT = "/work"
+
 SYSTEM_PROMPT = (
     "You are an exploit developer writing a minimal proof-of-concept to demonstrate "
-    "a specific vulnerability. You output ONLY a runnable Python script -- no prose, "
-    "no markdown."
+    "a specific vulnerability in a specific file. You output ONLY a runnable Python "
+    "script -- no prose, no markdown."
 )
 
 POC_PROMPT = """A security scan reported this potential vulnerability:
@@ -40,21 +51,26 @@ POC_PROMPT = """A security scan reported this potential vulnerability:
   File/line:   {file}:{line}
   Description: {description}
 
-Here is the relevant source code (for CONTEXT ONLY -- do not import from it):
---- BEGIN CODE ---
+The file under test is importable as the module `{module}` (its directory is on
+sys.path). Here is its source:
+--- BEGIN {file} ---
 {code}
---- END CODE ---
+--- END {file} ---
 
-Write a SHORT, COMPLETELY SELF-CONTAINED Python 3 script that proves this
-vulnerability class is exploitable.
+Write a SHORT Python 3 script that proves THIS SPECIFIC vulnerability by actually
+exercising the reported code.
 
 STRICT RULES:
-  - Do NOT import Flask/Django or reference the app above. Recreate the vulnerable
-    pattern yourself in plain Python.
-  - Set up everything the script needs first (create any files, data, or tables).
-  - Feed the vulnerable code a malicious, attacker-controlled input.
+  - IMPORT the real code: `import {module}` (or `from {module} import ...`) and
+    call the vulnerable function/route directly. Do NOT re-implement the vulnerable
+    pattern yourself -- the proof must run the code in {file}.
+  - Set up anything the target needs first (create any files, data, or tables it
+    reads; build a Flask test client with `.test_client()` for a route).
+  - Feed it a malicious, attacker-controlled input that triggers the flaw at the
+    reported location.
   - Print this EXACT marker, and ONLY if the exploit genuinely succeeds: {marker}
-  - Use ONLY the Python standard library. No network, no pip installs.
+  - Use ONLY the Python standard library plus whatever {file} already imports. No
+    network, no pip installs.
 
 Output ONLY the Python code, nothing else.
 """
@@ -72,19 +88,26 @@ Output when it ran:
 {output}
 --- END OUTPUT ---
 
-Fix the script so it correctly demonstrates the {vuln_class} vulnerability and
-prints {marker} on success. Keep it self-contained, standard-library only, and set
-up anything it needs. Output ONLY the corrected Python code.
+Fix the script so it correctly demonstrates the {vuln_class} vulnerability at
+{file}:{line} and prints {marker} on success. Remember to IMPORT and drive the
+real code in {file} rather than re-implementing it. Keep it standard-library only
+and set up anything it needs. Output ONLY the corrected Python code.
 """
 
 
 @dataclass
 class ValidationResult:
     finding: Finding
-    confirmed: bool
+    confirmed: bool               # marker printed (either proof tier)
+    evidence: Evidence            # the graded tier
     poc_code: str
-    output: str
+    output: str                   # exploit output, witness record stripped out
     attempts: int
+    witness: WitnessResult | None = None
+
+    @property
+    def line_proven(self) -> bool:
+        return self.evidence.is_line_proven
 
 
 class Validator:
@@ -95,20 +118,57 @@ class Validator:
 
     def validate(self, finding: Finding, code: str) -> ValidationResult:
         poc = self._initial_poc(finding, code)
-        output = ""
+        clean_output = ""
+        witness: WitnessResult | None = None
 
         for attempt in range(1, self.max_attempts + 1):
-            result = self.sandbox.run(self._as_command(poc))
-            output = (result.stdout + result.stderr).strip()
+            harness = build_harness(
+                poc_code=poc,
+                target_file=finding.file,
+                target_line=finding.line,
+                mount=MOUNT,
+                workdir="/tmp",
+            )
+            result = self.sandbox.run(self._as_command(harness))
+            raw = result.stdout + result.stderr
+            witness = parse_witness(result.stdout, finding.file, finding.line)
+            clean_output = strip_witness(raw)
 
             if MARKER in result.stdout:
-                return ValidationResult(finding, True, poc, output, attempt)
+                evidence = (
+                    Evidence.LINE_PROVEN
+                    if witness.available and witness.line_executed
+                    else Evidence.CLASS_ONLY
+                )
+                return ValidationResult(
+                    finding=finding,
+                    confirmed=True,
+                    evidence=evidence,
+                    poc_code=poc,
+                    output=clean_output,
+                    attempts=attempt,
+                    witness=witness,
+                )
 
-            # Failed: if attempts remain, let the model self-correct from the output.
+            # No marker: self-correct from the failure if attempts remain.
             if attempt < self.max_attempts:
-                poc = self._fix_poc(finding, code, poc, output)
+                poc = self._fix_poc(finding, code, poc, clean_output)
 
-        return ValidationResult(finding, False, poc, output, self.max_attempts)
+        return ValidationResult(
+            finding=finding,
+            confirmed=False,
+            evidence=Evidence.UNPROVEN,
+            poc_code=poc,
+            output=clean_output,
+            attempts=self.max_attempts,
+            witness=witness,
+        )
+
+    # -- prompting --------------------------------------------------------
+
+    def _module_name(self, file: str) -> str:
+        stem = file.replace("\\", "/").split("/")[-1]
+        return stem[:-3] if stem.endswith(".py") else stem
 
     def _initial_poc(self, finding: Finding, code: str) -> str:
         prompt = POC_PROMPT.format(
@@ -117,13 +177,19 @@ class Validator:
             line=finding.line,
             description=finding.description,
             code=code,
+            module=self._module_name(finding.file),
             marker=MARKER,
         )
         return self._clean(self.llm.complete(prompt=prompt, system=SYSTEM_PROMPT).text)
 
     def _fix_poc(self, finding: Finding, code: str, poc: str, output: str) -> str:
         prompt = FIX_PROMPT.format(
-            marker=MARKER, poc=poc, output=output, vuln_class=finding.vuln_class
+            marker=MARKER,
+            poc=poc,
+            output=output,
+            vuln_class=finding.vuln_class,
+            file=finding.file,
+            line=finding.line,
         )
         return self._clean(self.llm.complete(prompt=prompt, system=SYSTEM_PROMPT).text)
 
