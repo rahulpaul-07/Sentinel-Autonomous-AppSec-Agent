@@ -1,0 +1,12 @@
+{
+  "name": "sentinel-site",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "clean": "rm -rf ../docs/assets",
+    "build": "npm run clean && vite build",
+    "preview": "vite preview"
+  }
+}
