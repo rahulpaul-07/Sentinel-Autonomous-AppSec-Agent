@@ -183,7 +183,7 @@ class Scanner:
         self.use_reachability_gate = use_reachability_gate
         self.tools = Tools(target)
         self.hunter = Hunter(llm, self.tools)
-        self.validator = Validator(llm, Sandbox())
+        self.validator = Validator(llm, Sandbox(), target=target)
         self.patcher = Patcher(llm)
 
     def scan(self, validate: bool = True, patch: bool = True) -> ScanReport:

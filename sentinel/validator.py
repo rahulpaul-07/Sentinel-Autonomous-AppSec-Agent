@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+from pathlib import Path
 
 from sentinel.llm import LLMClient
 from sentinel.sandbox import Sandbox
@@ -111,9 +112,20 @@ class ValidationResult:
 
 
 class Validator:
-    def __init__(self, llm: LLMClient, sandbox: Sandbox, max_attempts: int = 3) -> None:
+    def __init__(
+        self,
+        llm: LLMClient,
+        sandbox: Sandbox,
+        target: str | Path | None = None,
+        max_attempts: int = 3,
+    ) -> None:
         self.llm = llm
         self.sandbox = sandbox
+        # The target directory is mounted read-only at MOUNT inside the sandbox so
+        # the PoC can import the module under test. Without it the container has no
+        # copy of the code, `import <target>` fails, and every exploit dies with
+        # ModuleNotFoundError before it can prove anything.
+        self.target = Path(target) if target is not None else None
         self.max_attempts = max_attempts
 
     def validate(self, finding: Finding, code: str) -> ValidationResult:
@@ -129,7 +141,7 @@ class Validator:
                 mount=MOUNT,
                 workdir="/tmp",
             )
-            result = self.sandbox.run(self._as_command(harness))
+            result = self.sandbox.run(self._as_command(harness), workdir=self.target)
             raw = result.stdout + result.stderr
             witness = parse_witness(result.stdout, finding.file, finding.line)
             clean_output = strip_witness(raw)
