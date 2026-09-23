@@ -2,22 +2,22 @@
 sentinel/hunter.py
 ------------------
 The Hunter agent: the "brain" that uses the tool layer (its hands) and the model
-layer (its reasoning) to find vulnerabilities in a codebase.
+layer (its reasoning) to find candidate vulnerabilities in a codebase.
 
 For each file in the target it:
   1. reads the source (with line numbers) via Tools,
   2. asks the LLM to analyze it and return structured findings as JSON,
   3. parses that JSON into typed Finding objects.
 
-This is the first version. In Module 8 we'll wrap it in a LangGraph orchestrator
-that lets the model call tools freely across multiple steps.
+Everything the Hunter reports is a CLAIM. The Validator is what turns a claim into
+proof (or discards it). The Hunter's job is recall -- surface every plausible bug --
+and leave precision to the stage that can actually execute an exploit.
 """
 
 from __future__ import annotations
 
 import json
-import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from sentinel.llm import LLMClient
 from sentinel.tools import Tools
@@ -32,6 +32,9 @@ class Finding:
     severity: str
     description: str
     confidence: float
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 SYSTEM_PROMPT = (
@@ -64,13 +67,58 @@ If you find nothing, respond with {{"findings": []}}.
 """
 
 
+def _extract_json_object(raw: str) -> dict | None:
+    """Pull the first complete JSON object out of a model reply, robustly.
+
+    Why not just `re.search(r"\\{.*\\}", raw, DOTALL)`? That greedy match runs from
+    the first '{' to the LAST '}' in the whole string. If the model emits a fenced
+    block, or any prose containing braces, or two objects, the captured span is
+    malformed and json.loads throws -- and the whole file's findings are silently
+    dropped.
+
+    Instead we scan for the first '{' and walk forward tracking brace depth (while
+    respecting string literals and escapes) until the matching '}' closes it. That
+    yields exactly one balanced object, which is what the model was asked for.
+    """
+    start = raw.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for i in range(start, len(raw)):
+        ch = raw[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = raw[start : i + 1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
 class Hunter:
     def __init__(self, llm: LLMClient, tools: Tools) -> None:
         self.llm = llm
         self.tools = tools
 
     def hunt(self) -> list[Finding]:
-        """Analyze every file in the target and return all findings."""
+        """Analyze every file in the target and return all candidate findings."""
         all_findings: list[Finding] = []
         for rel_path in self.tools.list_files():
             source = self.tools.read_file(rel_path)
@@ -83,17 +131,9 @@ class Hunter:
         return self._parse(response.text, path)
 
     def _parse(self, raw: str, path: str) -> list[Finding]:
-        """Turn the model's JSON reply into Finding objects, tolerantly.
-
-        Small models sometimes wrap JSON in fences or add stray text, so we grab
-        the first {...} block instead of trusting the whole string.
-        """
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if not match:
-            return []
-        try:
-            data = json.loads(match.group(0))
-        except json.JSONDecodeError:
+        """Turn the model's JSON reply into Finding objects, tolerantly."""
+        data = _extract_json_object(raw)
+        if data is None:
             return []
 
         findings: list[Finding] = []
