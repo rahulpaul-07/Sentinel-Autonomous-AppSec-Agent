@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sentinel Scan Report</title>
+<style>
+:root {
+  --bg:#0a0c11; --bg2:#0e1119; --panel:#12161f; --panel2:#161b26;
+  --line:#232a38; --text:#e7ecf3; --muted:#8a93a6; --micro:#5f6b80;
+  --accent:#4f8cff; --accent2:#7c5cff; --ok:#2fd47a; --bad:#ff5c6c;
+  --crit:#ff5c6c; --high:#ff9f43; --med:#ffd23f; --low:#5bc8ff; --unknown:#8a93a6;
+}
+:root:not([data-theme="dark"]) {
+  --bg:#f6f8fc; --bg2:#eef2f8; --panel:#ffffff; --panel2:#f2f5fb;
+  --line:#dde3ee; --text:#12161f; --muted:#5a6577; --micro:#8894a6;
+}
+* { box-sizing:border-box; }
+html,body { margin:0; padding:0; background:var(--bg); color:var(--text);
+  font:15px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+.mono,.code,.conf { font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+.wrap { max-width:960px; margin:0 auto; padding:40px 22px 80px; }
+
+.hero { position:relative; overflow:hidden; border:1px solid var(--line);
+  border-radius:18px; padding:34px 30px; background:
+    radial-gradient(120% 140% at 0% 0%, rgba(79,140,255,.16), transparent 55%),
+    radial-gradient(120% 140% at 100% 0%, rgba(124,92,255,.14), transparent 55%),
+    var(--panel); }
+.hero::before { content:""; position:absolute; inset:0; opacity:.5;
+  background-image:linear-gradient(var(--line) 1px,transparent 1px),
+    linear-gradient(90deg,var(--line) 1px,transparent 1px);
+  background-size:34px 34px; mask:radial-gradient(80% 80% at 50% 0%,#000,transparent 75%);
+  -webkit-mask:radial-gradient(80% 80% at 50% 0%,#000,transparent 75%); }
+.hero > * { position:relative; }
+.brand { display:flex; align-items:center; gap:11px; font-weight:700;
+  letter-spacing:.3px; font-size:14px; color:var(--muted); }
+.brand .dot { width:9px; height:9px; border-radius:50%;
+  background:var(--ok); box-shadow:0 0 14px var(--ok); }
+.hero h1 { margin:14px 0 6px; font-size:30px; letter-spacing:-.5px; }
+.hero h1 .accent { background:linear-gradient(90deg,var(--accent),var(--accent2));
+  -webkit-background-clip:text; background-clip:text; color:transparent; }
+.meta-row { display:flex; flex-wrap:wrap; gap:8px 18px; margin-top:14px;
+  color:var(--muted); font-size:13px; }
+.meta-row span { margin:0 16px 2px 0; }
+.meta-row b { color:var(--text); font-weight:600; }
+
+.tiles { display:flex; flex-wrap:wrap; gap:12px; margin:22px 0 8px; }
+.tile { flex:1 1 160px; border:1px solid var(--line); border-radius:14px;
+  padding:16px 16px 14px; background:var(--panel); }
+.tile .n { font-size:30px; font-weight:750; letter-spacing:-1px; line-height:1; }
+.tile .l { color:var(--muted); font-size:12.5px; margin-top:6px;
+  text-transform:uppercase; letter-spacing:.6px; }
+.tile.good .n { color:var(--ok); } .tile.bad .n { color:var(--bad); }
+.tile.warn .n { color:var(--high); }
+
+.pills { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 4px; }
+.pill { font-size:12.5px; padding:5px 11px; border-radius:999px;
+  border:1px solid var(--line); background:var(--panel2); text-transform:capitalize; }
+.pill-critical { color:var(--crit); border-color:color-mix(in srgb,var(--crit) 45%,var(--line)); }
+.pill-high { color:var(--high); border-color:color-mix(in srgb,var(--high) 45%,var(--line)); }
+.pill-medium { color:var(--med); border-color:color-mix(in srgb,var(--med) 45%,var(--line)); }
+.pill-low { color:var(--low); border-color:color-mix(in srgb,var(--low) 45%,var(--line)); }
+
+.section { font-size:18px; margin:34px 0 14px; display:flex; align-items:center; gap:10px; }
+.section .count { font-size:13px; color:var(--muted); border:1px solid var(--line);
+  border-radius:999px; padding:1px 9px; font-weight:600; }
+.muted-h { color:var(--muted); }
+.hint { color:var(--muted); font-size:13.5px; margin:-6px 0 14px; }
+.empty { color:var(--muted); border:1px dashed var(--line); border-radius:12px;
+  padding:16px; text-align:center; }
+
+.card { border:1px solid var(--line); border-radius:15px; padding:18px 18px 14px;
+  background:var(--panel); margin-bottom:14px; }
+.card.proven { border-left:3px solid var(--bad); }
+.card.classonly { border-left:3px solid var(--high); }
+.card.rejected { opacity:.82; border-left:3px solid var(--line); }
+.card.gated { opacity:.72; border-left:3px solid var(--accent2); }
+.card-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.card-title { display:flex; align-items:center; gap:11px; }
+.card-title h3 { margin-left:2px; }
+.card-title h3 { margin:0; font-size:17px; }
+.sev { margin-right:10px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px;
+  padding:3px 8px; border-radius:6px; color:#0a0c11; }
+.sev-critical { background:var(--crit); } .sev-high { background:var(--high); }
+.sev-medium { background:var(--med); } .sev-low { background:var(--low); }
+.sev-unknown { background:var(--unknown); }
+.status { font-size:11px; font-weight:700; letter-spacing:.6px; padding:4px 10px;
+  border-radius:999px; }
+.status-proven { color:var(--bad); background:color-mix(in srgb,var(--bad) 15%,transparent);
+  border:1px solid color-mix(in srgb,var(--bad) 40%,var(--line)); }
+.status-classonly { color:var(--high); background:color-mix(in srgb,var(--high) 15%,transparent);
+  border:1px solid color-mix(in srgb,var(--high) 40%,var(--line)); }
+.status-rejected { color:var(--muted); background:var(--panel2); border:1px solid var(--line); }
+.status-gated { color:var(--accent2); background:color-mix(in srgb,var(--accent2) 14%,transparent);
+  border:1px solid color-mix(in srgb,var(--accent2) 40%,var(--line)); }
+.witness,.gate { font-size:13px; color:var(--muted); background:var(--bg2);
+  border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:10px 0 2px; }
+.wlabel { display:block; color:var(--micro); font-size:10.5px; text-transform:uppercase;
+  letter-spacing:.6px; margin-bottom:4px; }
+.wyes { color:var(--ok); font-weight:600; }
+.wno { color:var(--high); font-weight:600; }
+.loc { display:flex; align-items:center; gap:12px; margin:10px 0 4px; font-size:13px; }
+.loc .mono { margin-right:12px; }
+.loc .mono { color:var(--accent); }
+.conf { color:var(--micro); font-size:12px; }
+.desc { color:var(--text); margin:6px 0 12px; }
+
+.drawer { border-top:1px solid var(--line); padding-top:10px; margin-top:6px; }
+.drawer summary { cursor:pointer; color:var(--muted); font-size:13.5px;
+  font-weight:600; list-style:none; user-select:none; }
+.drawer summary::-webkit-details-marker { display:none; }
+.drawer summary::before { content:"\25B8"; display:inline-block; margin-right:8px;
+  transition:transform .15s ease; color:var(--micro); }
+.drawer[open] summary::before { transform:rotate(90deg); }
+.micro-label { color:var(--micro); font-size:11px; text-transform:uppercase;
+  letter-spacing:.6px; margin:12px 0 5px; }
+.code { background:var(--bg2); border:1px solid var(--line); border-radius:10px;
+  padding:13px 14px; overflow-x:auto; font-size:12.5px; line-height:1.55; margin:10px 0 0;
+  white-space:pre; }
+.code.out { color:var(--muted); }
+.diff { display:flex; flex-direction:column; }
+.dl { display:block; white-space:pre; }
+.dl.add { color:var(--ok); } .dl.del { color:var(--bad); }
+.dl.meta { color:var(--accent2); } .dl.ctx { color:var(--muted); }
+.muted { color:var(--muted); }
+footer { margin-top:44px; padding-top:18px; border-top:1px solid var(--line);
+  color:var(--micro); font-size:12.5px; display:flex; justify-content:space-between;
+  flex-wrap:wrap; gap:8px; }
+footer a { color:var(--muted); text-decoration:none; border-bottom:1px dotted var(--line); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <div class="brand"><span class="dot"></span> SENTINEL &middot; AUTONOMOUS APPSEC AGENT</div>
+    <h1>Scan report <span class="accent">&middot; proven, not asserted</span></h1>
+    <div class="meta-row">
+      <span>Target <b class="mono">targets/vulnerable_app</b></span>
+      <span>Model <b class="mono">groq/openai/gpt-oss-120b</b></span>
+      <span>Runtime <b>12.34s</b></span>
+      <span>Generated <b>2026-09-23 05:07 UTC</b></span>
+    </div>
+  </header>
+
+  <div class="tiles">
+    <div class="tile"><div class="n">4</div><div class="l">Candidates</div></div>
+    <div class="tile bad"><div class="n">2</div><div class="l">Line proven</div></div>
+    <div class="tile warn"><div class="n">1</div><div class="l">Class only</div></div>
+    <div class="tile"><div class="n">1</div><div class="l">No path</div></div>
+    <div class="tile good"><div class="n">1</div><div class="l">Files fixed</div></div>
+  </div>
+  <div class="pills"><span class="pill pill-critical">1 critical</span><span class="pill pill-high">1 high</span></div>
+
+  <h2 class="section">Line-proven <span class="count">2</span></h2><p class="hint">The exploit succeeded <em>and</em> the reported line executed while it ran. These are claims demonstrated about this code.</p>
+      <article class="card proven">
+        <div class="card-head">
+          <div class="card-title">
+            <span class="sev sev-critical">critical</span>
+            <h3>SQL Injection</h3>
+          </div>
+          <span class="status status-proven" title="Exploit ran and the reported line executed.">LINE PROVEN</span>
+        </div>
+        <div class="loc"><span class="mono">app.py:33</span>
+          <span class="conf" title="Hunter confidence">conf 95%</span>
+        </div>
+        <p class="desc">username from request flows unsanitized into an SQL string.</p>
+        
+        
+        <div class="witness"><span class="wlabel">Execution witness</span><span class="wyes">reached app.py:33</span> during the exploit.</div>
+        <details class="drawer">
+          <summary>Proof-of-concept exploit <span class="muted">&middot; 1 attempt(s)</span></summary>
+          <pre class="code poc">import app
+# ... exploit ...
+print(&#x27;SENTINEL_PWNED&#x27;)
+</pre>
+          <div class="micro-label">Sandbox output</div>
+          <pre class="code out">SENTINEL_PWNED</pre>
+        </details>
+        
+        <details class="drawer">
+          <summary>Proposed secure-fix diff</summary>
+          <pre class="code diff"><span class="dl meta">--- a/app.py</span>
+<span class="dl meta">+++ b/app.py</span>
+<span class="dl meta">@@ -33 +33 @@</span>
+<span class="dl del">-    query = &quot;SELECT * FROM users WHERE name = &#x27;&quot; + username + &quot;&#x27;&quot;</span>
+<span class="dl add">+    cursor.execute(&quot;SELECT * FROM users WHERE name = ?&quot;, (username,))</span></pre>
+        </details>
+      </article>
+      <article class="card proven">
+        <div class="card-head">
+          <div class="card-title">
+            <span class="sev sev-high">high</span>
+            <h3>Hardcoded Secret</h3>
+          </div>
+          <span class="status status-proven" title="Exploit ran and the reported line executed.">LINE PROVEN</span>
+        </div>
+        <div class="loc"><span class="mono">app.py:18</span>
+          <span class="conf" title="Hunter confidence">conf 90%</span>
+        </div>
+        <p class="desc">an admin password is written directly in source.</p>
+        
+        
+        <div class="witness"><span class="wlabel">Execution witness</span><span class="wyes">reached app.py:18</span> during the exploit.</div>
+        <details class="drawer">
+          <summary>Proof-of-concept exploit <span class="muted">&middot; 2 attempt(s)</span></summary>
+          <pre class="code poc">import app
+# ... exploit ...
+print(&#x27;SENTINEL_PWNED&#x27;)
+</pre>
+          <div class="micro-label">Sandbox output</div>
+          <pre class="code out">SENTINEL_PWNED</pre>
+        </details>
+        
+        <details class="drawer">
+          <summary>Proposed secure-fix diff</summary>
+          <pre class="code diff"><span class="dl meta">--- a/app.py</span>
+<span class="dl meta">+++ b/app.py</span>
+<span class="dl meta">@@ -33 +33 @@</span>
+<span class="dl del">-    query = &quot;SELECT * FROM users WHERE name = &#x27;&quot; + username + &quot;&#x27;&quot;</span>
+<span class="dl add">+    cursor.execute(&quot;SELECT * FROM users WHERE name = ?&quot;, (username,))</span></pre>
+        </details>
+      </article><h2 class="section muted-h">Class-only <span class="count">1</span></h2><p class="hint">An exploit printed the success marker, but the trace shows the reported line never executed. That proves the vulnerability <em>class</em> is exploitable, not that this line is &mdash; so these are held back from the headline count and are not patched.</p>
+      <article class="card classonly">
+        <div class="card-head">
+          <div class="card-title">
+            <span class="sev sev-high">high</span>
+            <h3>Insecure Deserialization</h3>
+          </div>
+          <span class="status status-classonly" title="Exploit succeeded, but the reported line never ran.">CLASS ONLY</span>
+        </div>
+        <div class="loc"><span class="mono">app.py:61</span>
+          <span class="conf" title="Hunter confidence">conf 70%</span>
+        </div>
+        <p class="desc">pickle.loads on attacker-supplied bytes.</p>
+        
+        
+        <div class="witness"><span class="wlabel">Execution witness</span><span class="wno">never executed any code in app.py</span> &mdash; the exploit reproduced the class in isolation.</div>
+        <details class="drawer">
+          <summary>Proof-of-concept exploit <span class="muted">&middot; 1 attempt(s)</span></summary>
+          <pre class="code poc">import sqlite3
+# reproduces the class in isolation
+print(&#x27;SENTINEL_PWNED&#x27;)
+</pre>
+          <div class="micro-label">Sandbox output</div>
+          <pre class="code out">SENTINEL_PWNED</pre>
+        </details>
+        
+      </article><h2 class="section muted-h">Not demonstrated <span class="count">1</span></h2><p class="hint">Flagged by the hunter, then either rejected by the static reachability gate before any model call (1) or never demonstrated by a working exploit. They are shown so nothing is silently dropped.</p>
+      <article class="card gated">
+        <div class="card-head">
+          <div class="card-title">
+            <span class="sev sev-high">high</span>
+            <h3>Command Injection</h3>
+          </div>
+          <span class="status status-gated" title="Static analysis found no attacker path to this line.">NO PATH</span>
+        </div>
+        <div class="loc"><span class="mono">app.py:50</span>
+          <span class="conf" title="Hunter confidence">conf 40%</span>
+        </div>
+        <p class="desc">host reaches subprocess.run with an argument list (no shell).</p>
+        <div class="gate"><span class="wlabel">Static gate</span>`subprocess.run` at line 50: argument vector passed without a shell (shell=False)</div>
+        
+        
+      </article>
+
+  <footer>
+    <span>Line-proven findings were demonstrated by an executed exploit in a network-disabled
+      sandbox, with a line trace confirming the reported line ran.</span>
+    <span>Sentinel</span>
+  </footer>
+</div>
+</body>
+</html>
