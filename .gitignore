@@ -13,3 +13,13 @@ __pycache__/
 site/node_modules/
 site/.ssr-tmp/
 sentinel_appsec.egg-info/
+
+# Scan output
+report.html
+out.json
+*.patch
+
+# Scan output
+report.html
+out.json
+*.patch
