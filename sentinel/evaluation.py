@@ -3,54 +3,30 @@ sentinel/evaluation.py
 ----------------------
 The evaluation harness: measures how good Sentinel is against labeled ground truth.
 
-Definitions:
-  True Positive  (TP): a CONFIRMED finding that matches a known real vulnerability.
-  False Positive (FP): a CONFIRMED finding that matches no known vulnerability.
-  False Negative (FN): a known vulnerability Sentinel did NOT confirm.
+The metric math itself lives in sentinel/metrics.py (pure, dependency-free). This
+module is the part that actually runs a scan against a labeled target and turns the
+confirmed findings into TP/FP/FN by matching them to the ground truth.
 
-  Precision = TP / (TP + FP)
-  Recall    = TP / (TP + FN)
-  F1        = harmonic mean of precision and recall.
+Matching a finding to a truth is deliberately fuzzy on the class name (models say
+"Path Traversal" where the label says "Directory Traversal") but strict on location
+(same file, within LINE_TOLERANCE lines), so a right-class/wrong-place guess doesn't
+get counted as a hit.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
 
 from sentinel.llm import LLMClient
 from sentinel.hunter import Finding
+from sentinel.metrics import Metrics, TieredMetrics
 from sentinel.scanner import Scanner
 
+__all__ = ["Metrics", "TieredMetrics", "evaluate_target", "evaluate_target_tiered"]
 
 LINE_TOLERANCE = 5
 _STOP_WORDS = {"the", "of", "a", "an", "untrusted", "data", "vulnerability", "with"}
-
-
-@dataclass
-class Metrics:
-    tp: int = 0
-    fp: int = 0
-    fn: int = 0
-
-    @property
-    def precision(self) -> float:
-        denom = self.tp + self.fp
-        return self.tp / denom if denom else 1.0
-
-    @property
-    def recall(self) -> float:
-        denom = self.tp + self.fn
-        return self.tp / denom if denom else 1.0
-
-    @property
-    def f1(self) -> float:
-        p, r = self.precision, self.recall
-        return 2 * p * r / (p + r) if (p + r) else 0.0
-
-    def __add__(self, other: "Metrics") -> "Metrics":
-        return Metrics(self.tp + other.tp, self.fp + other.fp, self.fn + other.fn)
 
 
 def _keywords(name: str) -> set[str]:
@@ -71,18 +47,11 @@ def _matches(finding: Finding, truth: dict) -> bool:
     )
 
 
-def evaluate_target(llm: LLMClient, target: str) -> Metrics:
-    truths = json.loads(
-        (Path(target) / "ground_truth.json").read_text(encoding="utf-8")
-    )["vulnerabilities"]
-
-    scanner = Scanner(llm, target)
-    report = scanner.scan(patch=False)
-    confirmed = [s.finding for s in report.confirmed]
-
+def _score(findings: list[Finding], truths: list[dict]) -> Metrics:
+    """Match a set of findings against ground truth and count TP/FP/FN."""
     matched: set[int] = set()
     tp = 0
-    for finding in confirmed:
+    for finding in findings:
         idx = next(
             (i for i, t in enumerate(truths) if i not in matched and _matches(finding, t)),
             None,
@@ -91,6 +60,32 @@ def evaluate_target(llm: LLMClient, target: str) -> Metrics:
             tp += 1
             matched.add(idx)
 
-    fp = len(confirmed) - tp
+    fp = len(findings) - tp
     fn = len(truths) - len(matched)
     return Metrics(tp=tp, fp=fp, fn=fn)
+
+
+def evaluate_target_tiered(llm: LLMClient, target: str) -> TieredMetrics:
+    """Score a target at both readings of "confirmed".
+
+    The same scan is scored twice -- once counting every finding whose exploit
+    printed the marker (what a marker-only tool reports), once counting only the
+    findings whose reported line was observed to execute. The difference between
+    the two is the measurable value of the execution witness.
+    """
+    truths = json.loads(
+        (Path(target) / "ground_truth.json").read_text(encoding="utf-8")
+    )["vulnerabilities"]
+
+    scanner = Scanner(llm, target)
+    report = scanner.scan(patch=False)
+
+    return TieredMetrics(
+        permissive=_score([s.finding for s in report.confirmed], truths),
+        strict=_score([s.finding for s in report.line_proven], truths),
+    )
+
+
+def evaluate_target(llm: LLMClient, target: str) -> Metrics:
+    """Headline score: the strict reading (line-proven findings only)."""
+    return evaluate_target_tiered(llm, target).strict
