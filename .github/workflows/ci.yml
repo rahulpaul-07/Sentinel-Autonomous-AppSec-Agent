@@ -6,6 +6,7 @@ on:
 
 jobs:
   test:
+    name: Python tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +19,70 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt   # exact pinned lockfile
+          pip install -e .                  # install the package + console entry points
+
+      - name: Verify the CLI is wired up
+        run: sentinel --help
 
       - name: Run tests
         run: pytest -v
+
+  no-heavy-imports:
+    name: Core logic imports without the LLM stack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The analysis modules must not drag in litellm and its transitive tree.
+      # Installing ONLY pytest proves the decoupling holds, and fails loudly the
+      # first time someone adds a top-level import that breaks it.
+      - name: Install pytest only
+        run: pip install pytest
+
+      - name: Import the dependency-free modules
+        run: |
+          python -c "
+          from sentinel.reachability import analyze
+          from sentinel.witness import build_harness, parse_witness
+          from sentinel.evidence import Evidence
+          from sentinel.metrics import Metrics, TieredMetrics
+          import sys
+          assert 'litellm' not in sys.modules, 'litellm was imported transitively'
+          print('core logic imports clean, no LLM stack')
+          "
+
+      - name: Run the offline logic tests
+        run: pytest tests/test_reachability.py tests/test_witness.py -v
+
+  site:
+    name: Project page builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build the site
+        working-directory: site
+        run: |
+          npm ci
+          npm run build
+
+      # docs/ is committed, so a drift between source and built output means the
+      # published page is stale relative to site/.
+      - name: Fail if the committed build is out of date
+        run: |
+          if [ -n "$(git status --porcelain docs/)" ]; then
+            echo "docs/ is out of date -- run 'npm run build' in site/ and commit the result."
+            git status --porcelain docs/
+            exit 1
+          fi
