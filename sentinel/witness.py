@@ -1,0 +1,247 @@
+"""
+sentinel/witness.py
+-------------------
+The execution witness: did the exploit actually run the line it claims to exploit?
+
+The problem
+-----------
+An exploit that prints a success marker has proven something -- but not
+necessarily what it says. The documented failure mode is an LLM writing a
+self-contained demo that reproduces a vulnerability *pattern* and prints the
+marker without ever touching the code under test. The marker is satisfied; the
+claim is not. Recent work on Java PoC generation found that applying a post-hoc
+check -- re-running with instrumentation and confirming the trace reaches the
+vulnerable location -- invalidated roughly 44% of exploits that had passed a
+marker-only check.
+
+Those systems compare the trace against a *ground-truth* sink location supplied by
+a labeled benchmark. That works for measuring a technique; it cannot work in the
+field, where nobody knows the answer in advance.
+
+The approach here
+-----------------
+Use the agent's own reported location as the witness target. The hunter asserts
+"SQL injection at app.py:42". That assertion is checked against the trace of its
+own exploit:
+
+    marker printed  +  app.py:42 executed   ->  LINE_PROVEN
+    marker printed  +  app.py:42 never ran  ->  CLASS_ONLY
+
+No ground truth is needed, because the claim supplies its own target. That is what
+makes the check deployable on unlabeled code rather than only on a benchmark.
+
+Implementation
+--------------
+The PoC is wrapped in a harness that installs a `sys.settrace` line tracer, runs
+the PoC, and emits a machine-readable record of which lines of the target file
+executed. The harness is plain standard library, so it runs inside the same
+network-off sandbox with nothing extra installed.
+
+Honest limits
+-------------
+* Tracing records *that* a line ran, not that tainted data flowed through it. A
+  line can execute with benign input. Combined with the static taint gate this is
+  good evidence, but it is not a dataflow proof.
+* `sys.settrace` does not see into C extensions, and conflicts with debuggers and
+  coverage tools sharing the same hook.
+* A small line window absorbs the off-by-a-line drift that models routinely
+  produce when reporting a multi-line statement.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+
+# Emitted by the harness, parsed back out of sandbox stdout.
+WITNESS_PREFIX = "SENTINEL_WITNESS:"
+
+# A reported line this far from an executed line still counts as a hit. Models
+# commonly report the statement rather than the exact call, or vice versa.
+LINE_WINDOW = 3
+
+_WITNESS_RE = re.compile(rf"^{re.escape(WITNESS_PREFIX)}(\{{.*\}})\s*$", re.MULTILINE)
+
+
+@dataclass
+class WitnessResult:
+    """What the tracer observed while the exploit ran."""
+
+    available: bool = False          # did the harness emit a record at all?
+    file_executed: bool = False      # did any line of the target file run?
+    line_executed: bool = False      # did the reported line (within window) run?
+    executed_lines: list[int] = field(default_factory=list)
+    target_file: str = ""
+    target_line: int = 0
+    error: str = ""
+
+    @property
+    def nearest_line(self) -> int | None:
+        if not self.executed_lines:
+            return None
+        return min(self.executed_lines, key=lambda n: abs(n - self.target_line))
+
+    def explain(self) -> str:
+        if not self.available:
+            return "No execution trace was captured for this run."
+        if self.line_executed:
+            return (
+                f"{self.target_file}:{self.target_line} executed while the exploit ran."
+            )
+        if self.file_executed:
+            near = self.nearest_line
+            return (
+                f"The exploit ran code in {self.target_file}, but never reached "
+                f"line {self.target_line}"
+                + (f" (nearest executed line: {near})." if near else ".")
+            )
+        return (
+            f"The exploit never executed any code in {self.target_file} -- it "
+            "demonstrated the vulnerability class in isolation."
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "available": self.available,
+            "file_executed": self.file_executed,
+            "line_executed": self.line_executed,
+            "target_file": self.target_file,
+            "target_line": self.target_line,
+            "executed_lines": self.executed_lines[:200],
+            "nearest_line": self.nearest_line,
+            "error": self.error,
+        }
+
+
+HARNESS_TEMPLATE = '''\
+import sys, os, json, ast, traceback
+
+_TARGET_BASENAME = {target_basename!r}
+_TARGET_PATH = {target_path!r}
+_TARGET_LINE = {target_line!r}
+_WITNESS_PREFIX = {prefix!r}
+_hits = set()
+_err = ""
+
+# Lines that execute merely because a module is imported -- `def`/`class` headers
+# and their decorators. Counting these as a witness would let a PoC that does
+# nothing but `import target` appear to have reached a nearby sink, which is a
+# false proof of exactly the kind this module exists to prevent.
+_import_time_lines = set()
+try:
+    with open(_TARGET_PATH, "r", encoding="utf-8", errors="replace") as _fh:
+        _tree = ast.parse(_fh.read())
+    for _n in ast.walk(_tree):
+        if isinstance(_n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            _import_time_lines.add(_n.lineno)
+            for _d in _n.decorator_list:
+                _import_time_lines.add(_d.lineno)
+except Exception:
+    pass
+
+def _tracer(frame, event, arg):
+    if event == "line":
+        fn = frame.f_code.co_filename
+        if os.path.basename(fn) == _TARGET_BASENAME:
+            _hits.add(frame.f_lineno)
+    return _tracer
+
+_POC = {poc!r}
+
+sys.path.insert(0, {mount!r})
+os.chdir({workdir!r})
+
+sys.settrace(_tracer)
+try:
+    exec(compile(_POC, "<sentinel-poc>", "exec"), {{"__name__": "__main__"}})
+except SystemExit:
+    pass
+except BaseException:
+    _err = traceback.format_exc()[-1500:]
+finally:
+    sys.settrace(None)
+
+if _err:
+    sys.stderr.write(_err + "\\n")
+
+_lines = sorted(_hits)
+_witness_lines = [n for n in _lines if n not in _import_time_lines]
+_record = {{
+    "available": True,
+    "file_executed": bool(_lines),
+    "line_executed": any(abs(n - _TARGET_LINE) <= {window} for n in _witness_lines),
+    "executed_lines": _lines[:200],
+    "import_time_lines_ignored": sorted(_import_time_lines)[:200],
+    "error": _err[-400:],
+}}
+sys.stdout.write("\\n" + _WITNESS_PREFIX + json.dumps(_record) + "\\n")
+sys.stdout.flush()
+'''
+
+
+def build_harness(
+    poc_code: str,
+    target_file: str,
+    target_line: int,
+    mount: str = "/target",
+    workdir: str = "/tmp",
+) -> str:
+    """Wrap PoC source in a tracing harness.
+
+    The harness puts the target's directory on `sys.path` so the PoC can import
+    the module under test, runs the PoC with a line tracer installed, and prints a
+    JSON witness record. It never fails the run: a PoC that raises still produces
+    a record, because "it crashed" is itself evidence.
+    """
+    basename = target_file.replace("\\", "/").split("/")[-1]
+    return HARNESS_TEMPLATE.format(
+        target_basename=basename,
+        target_path=f"{mount.rstrip('/')}/{target_file.replace(chr(92), '/')}",
+        target_line=int(target_line or 0),
+        prefix=WITNESS_PREFIX,
+        poc=poc_code,
+        mount=mount,
+        workdir=workdir,
+        window=LINE_WINDOW,
+    )
+
+
+def parse_witness(output: str, target_file: str = "", target_line: int = 0) -> WitnessResult:
+    """Recover the witness record from sandbox output.
+
+    Absence of a record is not a failure of the finding -- it means the trace is
+    unavailable, and the caller must not treat that as disproof.
+    """
+    match = None
+    for match in _WITNESS_RE.finditer(output or ""):
+        pass  # keep the last record if the PoC somehow printed several
+    if match is None:
+        return WitnessResult(
+            available=False, target_file=target_file, target_line=target_line
+        )
+
+    try:
+        data = json.loads(match.group(1))
+    except (ValueError, TypeError) as exc:
+        return WitnessResult(
+            available=False,
+            target_file=target_file,
+            target_line=target_line,
+            error=f"malformed witness record: {exc}",
+        )
+
+    return WitnessResult(
+        available=bool(data.get("available", True)),
+        file_executed=bool(data.get("file_executed", False)),
+        line_executed=bool(data.get("line_executed", False)),
+        executed_lines=[int(n) for n in data.get("executed_lines", []) if isinstance(n, int)],
+        target_file=target_file,
+        target_line=target_line,
+        error=str(data.get("error", "")),
+    )
+
+
+def strip_witness(output: str) -> str:
+    """Remove witness records so report output shows only the exploit's own text."""
+    return _WITNESS_RE.sub("", output or "").strip()
