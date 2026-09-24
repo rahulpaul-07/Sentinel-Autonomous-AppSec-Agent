@@ -130,18 +130,54 @@ check turns that into one clear error instead of a scan that appears to find not
 
 Measured by a reproducible harness (`evaluate.py`) against labeled ground truth: four
 targets, five vulnerability classes (SQL injection, command injection, hardcoded secret,
-path traversal, insecure deserialization) plus a clean control.
+path traversal, insecure deserialization) plus a clean control that should produce
+nothing.
+
+### Current pipeline (September 2026)
+
+Measured on 24 September 2026 at commit `6a2b78d` with `groq/openai/gpt-oss-120b`,
+three runs, exploits running in each target's dependency image with the network off.
+The unedited record is
+[`benchmarks/results/2026-09-24-eval-gpt-oss-120b.json`](benchmarks/results/2026-09-24-eval-gpt-oss-120b.json).
+
+| Run | Strict recall (line-proven) | Permissive recall (marker printed) | False positives | What differed |
+|---|---|---|---|---|
+| 1 | 60% (3 of 5) | 80% (4 of 5) | 0 | the path-traversal exploit ran and failed |
+| 2 | 80% (4 of 5) | 100% (5 of 5) | 0 | |
+| 3 | 80% (4 of 5) | 100% (5 of 5) | 0 | |
+
+**Strict recall 60–80%, permissive recall 80–100%, no false positives in three runs.**
+What those figures do and do not show:
+
+* **Strict recall cannot exceed 80% here.** The hardcoded secret sits on a module-level
+  line, which runs only because the module is imported, and import-time execution is
+  never counted as a witness. So 80% means every bug that execution *can* prove was
+  proven: SQL injection, command injection and insecure deserialization in every run,
+  path traversal in two of three.
+* **The gap between the two readings is that one finding, in every run.** These runs do
+  not show the witness catching an exploit that reproduced a vulnerability pattern in
+  isolation; the only thing it demoted was a line execution cannot prove. Whether the
+  witness changes grades on real code is what the [CVE benchmark](#real-world-cves) is
+  for.
+* **There is no precision figure.** Three or four findings were line-proven per run, too
+  few to divide by. And the clean control was analysed in only one of the three runs:
+  in the other two, the model's reply for it could not be parsed, so the file was never
+  examined. (This run predates capturing the reply itself; later diagnostic calls on the
+  same file caught one, a reply that closed its findings list twice.) In the run where it
+  was read, its one candidate was rejected by the static
+  gate before any exploit ran. The hunter now asks again when a reply is malformed
+  (`2ae9118`); a re-run on that commit will replace this measurement.
+* **Five cases is a small benchmark.** One case moves recall by 20 points, so a single
+  run says little on its own; that is why the range is reported, not the best run.
+
+### v1 results (August 2026)
 
 > **These numbers measure the v1 validator, not the current pipeline.** They were taken
-> in August 2026, before the execution witness, the reachability gate and the evidence
-> tiers existed. The v1 validator told the model to write a *self-contained* exploit
-> that did not import the target, so every "proof" in the table reproduced the
-> vulnerability pattern in isolation. Under today's ladder that is `CLASS_ONLY` at best.
-> They are kept because they are what was measured, and because the tiered evaluator
-> exists to show how far a marker-only check overstates. The current pipeline has not
-> been benchmarked yet; `sentinel-eval --runs 5` produces that measurement.
-
-### Reproducibility (v1, August 2026)
+> before the execution witness, the reachability gate and the evidence tiers existed.
+> The v1 validator told the model to write a *self-contained* exploit that did not
+> import the target, so every "proof" in the table reproduced the vulnerability pattern
+> in isolation. Under today's ladder that is `CLASS_ONLY` at best. They are kept because
+> they are what was measured.
 
 Scores vary **by model** and, even at temperature 0, **between runs on the same model**
 — hosted providers are not bit-reproducible.
@@ -152,9 +188,7 @@ Scores vary **by model** and, even at temperature 0, **between runs on the same 
 | 2 | `groq/openai/gpt-oss-120b` | 100% | 100% | 1.00 | all five classes reproduced |
 | 3 | `groq/openai/gpt-oss-120b` | 71% | 100% | 0.83 | 2 false positives on the clean control |
 
-Run 2 is the **best observed** result, not the expected one. The honest summary is the
-range: **precision 71–100%, recall 80–100%** on a five-case benchmark. Because a single
-run is one noisy sample, `evaluate.py --runs N` reports the mean and spread.
+The honest summary of v1 is the range: **precision 71–100%, recall 80–100%**.
 
 ### Tiered scoring
 
@@ -162,7 +196,8 @@ run is one noisy sample, `evaluate.py --runs N` reports the mean and spread.
 exploit printed the marker (the permissive reading a marker-only tool reports), once
 counting only line-proven findings. **The gap between those two numbers is the amount a
 marker-only scanner overstates.** Measuring it was not possible before the witness
-existed.
+existed. On the four benchmark targets the gap is one finding per run, the hardcoded
+secret, for the structural reason given above.
 
 ### The self-correction result (v1)
 
@@ -172,9 +207,9 @@ recall to 100% while precision held: a measurable gain from a specific change, w
 what the harness exists to prove.
 
 > **Note on the numbers.** Five cases is far too few to quote a single figure from with
-> confidence. The value is the methodology — every change is measurable, and the harness
-> caught both the model-dependent recall regression in run 1 and the precision drop in
-> run 3 before either went unnoticed.
+> confidence. The value is the methodology — every change is measurable. In v1 the
+> harness caught a model-dependent recall drop and a precision drop on the clean control;
+> in September it caught a clean control that was never analysed at all.
 
 ### Real-world CVEs
 

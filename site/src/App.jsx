@@ -470,8 +470,17 @@ function Results() {
           <span className="font-medium text-ink">What these runs did not measure.</span>{" "}
           The v1 validator asked the model for a self-contained exploit that did not import
           the target, so every success in this table reproduced the vulnerability pattern in
-          isolation. On today&rsquo;s evidence ladder that is class-only at best. The
-          current pipeline has not been benchmarked yet.
+          isolation. On today&rsquo;s evidence ladder that is class-only at best.
+        </p>
+        <p className="mt-4 text-[14.5px] leading-relaxed text-muted">
+          <span className="font-medium text-ink">The current pipeline, September 2026.</span>{" "}
+          Three runs with <code className="font-mono text-violets">gpt-oss-120b</code>:
+          strict (line-proven) recall 60&ndash;80%, permissive recall 80&ndash;100%, no
+          false positives. Strict recall cannot exceed 80% here, because the hardcoded
+          secret sits on a module-level line that execution cannot prove, and that one
+          finding was the whole gap in every run. There is no precision figure: too few
+          findings were line-proven, and the clean control was analysed in only one of
+          the three runs. The README gives the full breakdown and the results file.
         </p>
         <p className="mt-4 text-[14.5px] leading-relaxed text-muted">
           The evaluator now scores the same scan twice — once counting any exploit that
