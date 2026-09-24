@@ -313,3 +313,22 @@ def test_cli_passes_build_env_to_the_scanner(monkeypatch):
     scan.main()
 
     assert seen.get("build_env") is True
+
+
+def test_dependencies_come_from_env_root_and_the_base_image_is_honoured(monkeypatch):
+    """A scan scoped to a subdirectory must still build from the repo's own deps."""
+    seen = []
+
+    def fake_prepare(target, base=DEFAULT_IMAGE):
+        seen.append((target, base))
+        return Environment(image="sentinel-env:sub", status="built")
+
+    monkeypatch.setattr("sentinel.scanner.prepare_environment", fake_prepare)
+    commands = _capture_docker_run(monkeypatch)
+
+    Scanner(StubLLM(), "targets/vulnerable_app", build_env=True,
+            image="python:3.10-slim", env_root="targets").scan(patch=False)
+
+    assert seen == [("targets", "python:3.10-slim")]
+    run = next(c for c in commands if c[:2] == ["docker", "run"])
+    assert "sentinel-env:sub" in run

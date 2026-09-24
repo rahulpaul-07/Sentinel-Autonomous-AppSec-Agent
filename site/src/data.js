@@ -66,7 +66,7 @@ export const TIERS = [
 
 export const LIMITS = [
   "The line tracer records that a line executed, not that tainted data flowed through it. Combined with the taint gate this is strong evidence; it is not a dataflow proof.",
-  "The benchmark is five cases across four targets. That is enough to make changes measurable and to catch regressions — not enough to quote a headline accuracy number.",
+  "The benchmark is five cases across four targets. That is enough to make changes measurable and to catch regressions — not enough to quote a headline accuracy number. A real-world CVE harness exists, with its scoring rules fixed in advance, but has no labelled cases yet.",
   "The static gate is pattern-based and deliberately fails open: anything it cannot analyze proceeds to validation, so it never trades recall for a cleaner number.",
   "Lines that run only because the module was imported never count as a witness. A hardcoded secret lives on such a line, so it tops out at class-only: execution is the wrong kind of evidence for it.",
   "Imports follow __init__.py: src/pkg/db.py is imported as pkg.db. Namespace packages without __init__.py are imported from the file's own directory, which breaks relative imports inside them.",

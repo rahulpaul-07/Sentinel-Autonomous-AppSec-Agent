@@ -211,6 +211,8 @@ class Scanner:
         min_confidence: float = 0.0,
         use_reachability_gate: bool = True,
         build_env: bool = False,
+        image: str | None = None,
+        env_root: str | None = None,
     ) -> None:
         self.llm = llm
         self.target = target
@@ -220,9 +222,14 @@ class Scanner:
         # Opt-in: building runs `pip install` for the target's dependencies with
         # network. See sentinel/environment.py for why that is a trust decision.
         self.build_env = build_env
+        # Where declared dependencies live. Usually the target itself, but a scan
+        # scoped to part of a repository still needs the repository's own
+        # requirements.txt or pyproject.toml.
+        self.env_root = env_root if env_root is not None else target
         self.tools = Tools(target)
         self.hunter = Hunter(llm, self.tools)
-        self.validator = Validator(llm, Sandbox(), target=target)
+        sandbox = Sandbox(image=image) if image else Sandbox()
+        self.validator = Validator(llm, sandbox, target=target)
         self.patcher = Patcher(llm)
 
     def scan(self, validate: bool = True, patch: bool = True) -> ScanReport:
@@ -232,7 +239,7 @@ class Scanner:
         if validate:
             if self.build_env:
                 report.environment = prepare_environment(
-                    self.target, base=self.validator.sandbox.image
+                    self.env_root, base=self.validator.sandbox.image
                 )
                 self.validator.sandbox.image = report.environment.image
             else:

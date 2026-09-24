@@ -174,8 +174,15 @@ what the harness exists to prove.
 > **Note on the numbers.** Five cases is far too few to quote a single figure from with
 > confidence. The value is the methodology — every change is measurable, and the harness
 > caught both the model-dependent recall regression in run 1 and the precision drop in
-> run 3 before either went unnoticed. Expanding the benchmark with real-world CVEs is the
-> top roadmap item.
+> run 3 before either went unnoticed.
+
+### Real-world CVEs
+
+[`benchmarks/cves/`](benchmarks/cves/README.md) scans published vulnerabilities in real
+projects at the vulnerable commit and at the fixed one, with the scoring rules written
+down before any run. `sentinel-cve --runs 3` runs it. **The manifest has no cases yet**,
+so there are no real-world numbers. Each case needs a hand-checked sink line, and the
+harness refuses to run on an empty manifest rather than print a number.
 
 ---
 
@@ -223,7 +230,7 @@ sentinel-eval --runs 5
 ## Tests
 
 ```bash
-pip install pytest && pytest -q     # 113 tests, about a second, offline
+pip install pytest && pytest -q     # 167 tests, about a second, offline
 pytest -m docker                    # 12 more, against a real Docker daemon
 ```
 
@@ -282,7 +289,8 @@ cd site && npm install && npm run build   # outputs to ../docs
   A line can execute with benign input. Combined with the static taint gate this is
   strong evidence — it is not a dataflow proof. Closing that gap is on the roadmap.
 * The benchmark is **five cases**. Enough to make changes measurable and catch
-  regressions; not enough to quote a headline accuracy number. Real-world CVEs next.
+  regressions; not enough to quote a headline accuracy number. The real-world CVE
+  harness exists, but its manifest is empty until cases are labelled.
 * The static gate is pattern-based, with no path sensitivity, no alias analysis, and no
   cross-module tracking. It deliberately fails open.
 * **Module-level findings cannot be line-proven.** Lines that run only because the module
@@ -307,6 +315,8 @@ cd site && npm install && npm run build   # outputs to ../docs
 * Installable package (`sentinel`, `sentinel-eval`), argparse CLI, JSON output
 * Offline test suite, plus Docker tests that exercise the real sandbox in CI
 * Per-target sandbox images built from declared dependencies (`--build-env`)
+* Imports resolved from the package tree, so `src/pkg/db.py` is `pkg.db`
+* CVE benchmark harness with pre-registered scoring (`sentinel-cve`), no cases yet
 * Built project page under `docs/`
 
 ## License

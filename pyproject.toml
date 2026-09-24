@@ -22,13 +22,14 @@ Repository = "https://github.com/rahulpaul-07/Sentinel-Autonomous-AppSec-Agent"
 [project.scripts]
 sentinel = "scan:main"
 sentinel-eval = "evaluate:main"
+sentinel-cve = "benchmark_cves:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 
 [tool.setuptools]
 packages = ["sentinel"]
-py-modules = ["scan", "evaluate"]
+py-modules = ["scan", "evaluate", "benchmark_cves"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
