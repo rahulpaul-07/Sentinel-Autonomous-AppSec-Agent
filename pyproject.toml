@@ -33,3 +33,7 @@ py-modules = ["scan", "evaluate"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# Tests marked `docker` drive a real Docker daemon. They are deselected by default
+# so `pytest` stays offline; run them with `pytest -m docker`.
+markers = ["docker: needs a running Docker daemon"]
+addopts = '-m "not docker"'
