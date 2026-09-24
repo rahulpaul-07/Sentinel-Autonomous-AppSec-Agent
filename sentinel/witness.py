@@ -217,7 +217,7 @@ def _tracer(frame, event, arg):
 
 _POC = {poc!r}
 
-sys.path.insert(0, {mount!r})
+sys.path.insert(0, {import_path!r})
 os.chdir({workdir!r})
 
 sys.settrace(_tracer)
@@ -259,11 +259,13 @@ def build_harness(
     target_line: int,
     mount: str = "/target",
     workdir: str = "/tmp",
+    import_root: str = "",
 ) -> str:
     """Wrap PoC source in a tracing harness.
 
-    The harness puts the target's directory on `sys.path` so the PoC can import
-    the module under test, runs the PoC with a line tracer installed, and prints a
+    The harness puts the target's import root -- the mount itself for a flat
+    layout, `<mount>/src` for a src layout -- on `sys.path` so the PoC can import
+    the module under test the way the project would, runs the PoC with a line tracer installed, and prints a
     JSON witness record. It never fails the run: a PoC that raises still produces
     a record, because "it crashed" is itself evidence.
     """
@@ -274,10 +276,15 @@ def build_harness(
         target_line=int(target_line or 0),
         prefix=WITNESS_PREFIX,
         poc=poc_code,
-        mount=mount,
+        import_path=_join(mount, import_root),
         workdir=workdir,
         window=LINE_WINDOW,
     )
+
+
+def _join(mount: str, rel: str) -> str:
+    rel = rel.replace("\\", "/").strip("/")
+    return f"{mount.rstrip('/')}/{rel}" if rel else mount
 
 
 def parse_witness(output: str, target_file: str = "", target_line: int = 0) -> WitnessResult:

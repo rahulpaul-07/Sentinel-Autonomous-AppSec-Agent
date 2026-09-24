@@ -41,24 +41,68 @@ MARKER = "SENTINEL_PWNED"
 _MISSING_MODULE_RE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
 
 
-def missing_dependency(output: str, target_module: str) -> str | None:
+def missing_dependency(
+    output: str, target_module: str, local_modules: set[str] | None = None
+) -> str | None:
     """Name the third-party module the sandbox lacks, if that is why a PoC died.
 
     The distinction that matters here is WHICH module is missing:
 
-      * the target's own module  -> the code under test was never mounted into the
-        container. That is an infrastructure fault on our side, and it must stay
-        UNPROVEN so it stays visible rather than being excused as an environment
-        gap.
+      * the target's own module, its top-level package, or any other module that
+        lives in the target tree -> the code under test was not importable from
+        the mount. That is an infrastructure fault on our side (a broken mount or
+        a wrong import root), and it must stay UNPROVEN so it stays visible rather
+        than being excused as an environment gap.
       * anything else            -> the target imports a third-party package that
         the sandbox image does not have. The exploit never got to run, so grading
         it UNPROVEN would claim we tested something we did not.
     """
+    ours = {target_module.split(".")[0]} | set(local_modules or ())
     for match in _MISSING_MODULE_RE.finditer(output or ""):
         module = match.group(1).split(".")[0]
-        if module and module != target_module:
+        if module and module not in ours:
             return module
     return None
+
+
+def resolve_import(target_root: str | Path, file: str) -> tuple[str, str]:
+    """Work out how the project itself would import `file`.
+
+    Returns (import_root, module): the directory to put on sys.path, relative to
+    the target root and in forward-slash form, and the dotted module name from
+    there. Walk up from the file while the directory is a package (has an
+    `__init__.py`); the first directory that is not a package is the import root.
+    The walk never leaves the target root.
+
+        app.py                     -> ("",    "app")
+        pkg/db.py      (pkg is a package)  -> ("",    "pkg.db")
+        src/pkg/db.py  (pkg is a package)  -> ("src", "pkg.db")
+        scripts/tool.py (no __init__.py)   -> ("scripts", "tool")
+    """
+    root = Path(target_root)
+    parts = [p for p in file.replace("\\", "/").split("/") if p]
+    stem = parts[-1][:-3] if parts[-1].endswith(".py") else parts[-1]
+    dirs = parts[:-1]
+
+    module = [] if stem == "__init__" else [stem]
+    while dirs and (root.joinpath(*dirs) / "__init__.py").is_file():
+        module.insert(0, dirs.pop())
+    return "/".join(dirs), ".".join(module)
+
+
+def local_modules(target_root: str | Path, import_root: str) -> set[str]:
+    """Top-level names importable from the import root that belong to the target."""
+    base = Path(target_root).joinpath(*[p for p in import_root.split("/") if p])
+    names: set[str] = set()
+    try:
+        for entry in base.iterdir():
+            if entry.is_file() and entry.suffix == ".py":
+                names.add(entry.stem)
+            elif entry.is_dir() and not entry.name.startswith("."):
+                names.add(entry.name)
+    except OSError:
+        pass
+    return names
 
 # Where the sandbox mounts the target codebase (read-only). The harness adds this
 # to sys.path so the PoC can import the real module under test.
@@ -76,8 +120,8 @@ POC_PROMPT = """A security scan reported this potential vulnerability:
   File/line:   {file}:{line}
   Description: {description}
 
-The file under test is importable as the module `{module}` (its directory is on
-sys.path). Here is its source:
+The file under test is importable as the module `{module}` (its import root is
+on sys.path, so relative imports inside its package work). Here is its source:
 --- BEGIN {file} ---
 {code}
 --- END {file} ---
@@ -115,7 +159,7 @@ Output when it ran:
 
 Fix the script so it correctly demonstrates the {vuln_class} vulnerability at
 {file}:{line} and prints {marker} on success. Remember to IMPORT and drive the
-real code in {file} rather than re-implementing it. Keep it standard-library only
+real code (`import {module}`) rather than re-implementing it. Keep it standard-library only
 and set up anything it needs. Output ONLY the corrected Python code.
 """
 
@@ -154,7 +198,8 @@ class Validator:
         self.max_attempts = max_attempts
 
     def validate(self, finding: Finding, code: str) -> ValidationResult:
-        poc = self._initial_poc(finding, code)
+        import_root, module = self._import_location(finding.file)
+        poc = self._initial_poc(finding, code, module)
         clean_output = ""
         witness: WitnessResult | None = None
 
@@ -165,6 +210,7 @@ class Validator:
                 target_line=finding.line,
                 mount=MOUNT,
                 workdir="/tmp",
+                import_root=import_root,
             )
             result = self.sandbox.run(self._as_command(harness), workdir=self.target)
             raw = result.stdout + result.stderr
@@ -189,13 +235,14 @@ class Validator:
 
             # No marker: self-correct from the failure if attempts remain.
             if attempt < self.max_attempts:
-                poc = self._fix_poc(finding, code, poc, clean_output)
+                poc = self._fix_poc(finding, code, poc, clean_output, module)
 
         # Every attempt failed. Before calling the claim unproven, check whether we
         # ever actually got to test it: if the target could not even be imported
         # because the sandbox lacks one of its dependencies, nothing was tested and
         # saying "unproven" would overstate the run.
-        missing = missing_dependency(clean_output, self._module_name(finding.file))
+        ours = local_modules(self.target, import_root) if self.target else set()
+        missing = missing_dependency(clean_output, module, ours)
         return ValidationResult(
             finding=finding,
             confirmed=False,
@@ -209,24 +256,30 @@ class Validator:
 
     # -- prompting --------------------------------------------------------
 
-    def _module_name(self, file: str) -> str:
-        stem = file.replace("\\", "/").split("/")[-1]
-        return stem[:-3] if stem.endswith(".py") else stem
+    def _import_location(self, file: str) -> tuple[str, str]:
+        """(import root, dotted module) for the file, as the project would import it."""
+        if self.target is None:
+            stem = file.replace("\\", "/").split("/")[-1]
+            return "", stem[:-3] if stem.endswith(".py") else stem
+        return resolve_import(self.target, file)
 
-    def _initial_poc(self, finding: Finding, code: str) -> str:
+    def _initial_poc(self, finding: Finding, code: str, module: str) -> str:
         prompt = POC_PROMPT.format(
             vuln_class=finding.vuln_class,
             file=finding.file,
             line=finding.line,
             description=finding.description,
             code=code,
-            module=self._module_name(finding.file),
+            module=module,
             marker=MARKER,
         )
         return self._clean(self.llm.complete(prompt=prompt, system=SYSTEM_PROMPT).text)
 
-    def _fix_poc(self, finding: Finding, code: str, poc: str, output: str) -> str:
+    def _fix_poc(
+        self, finding: Finding, code: str, poc: str, output: str, module: str
+    ) -> str:
         prompt = FIX_PROMPT.format(
+            module=module,
             marker=MARKER,
             poc=poc,
             output=output,

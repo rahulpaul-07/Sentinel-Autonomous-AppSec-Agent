@@ -218,8 +218,8 @@ sentinel-eval --runs 5
 ## Tests
 
 ```bash
-pip install pytest && pytest -q     # 100 tests, under a second, offline
-pytest -m docker                    # 11 more, against a real Docker daemon
+pip install pytest && pytest -q     # 113 tests, about a second, offline
+pytest -m docker                    # 12 more, against a real Docker daemon
 ```
 
 The default suite runs **offline** — no Docker, no API key. The two boundaries that touch
@@ -284,9 +284,11 @@ cd site && npm install && npm run build   # outputs to ../docs
   was imported are never counted as a witness, so a hardcoded secret, which lives on a
   module-level line, tops out at `CLASS_ONLY`. Execution is the wrong kind of evidence
   for that class.
-* **Flat layouts only.** The validator imports the target by its file name from the
-  mount root, so `src/pkg/db.py` becomes `import db`, which fails in a real package.
-  This has to be fixed before real-world CVEs can be benchmarked.
+* **Imports follow `__init__.py`.** The validator walks up from the file while each
+  directory is a package, puts the first non-package directory on `sys.path`, and
+  imports the dotted path from there, so `src/pkg/db.py` is `pkg.db`. Namespace packages
+  (no `__init__.py`) are imported from the file's own directory, which breaks relative
+  imports inside them.
 * `sys.settrace` does not see into C extensions and conflicts with debuggers or coverage
   tools sharing the hook.
 * Validation requires a running Docker daemon.

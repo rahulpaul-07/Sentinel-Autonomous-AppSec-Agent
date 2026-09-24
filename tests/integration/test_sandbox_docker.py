@@ -34,6 +34,7 @@ pytestmark = pytest.mark.docker
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 TARGET = FIXTURES / "sandbox_target"
 NEEDS_DEP = FIXTURES / "needs_dependency"
+SRC_LAYOUT = FIXTURES / "src_layout_target"
 
 
 def _line_of(path: Path, needle: str) -> int:
@@ -107,6 +108,17 @@ def test_missing_third_party_package_is_env_incomplete():
 
     assert result.evidence is Evidence.ENV_INCOMPLETE, result.output
     assert result.missing_module == "yaml"
+
+
+def test_src_layout_package_is_imported_as_the_project_would():
+    """Catches: basename imports and a mount-root-only sys.path on real packages."""
+    file = "src/shop/db.py"
+    line = _line_of(SRC_LAYOUT / file, "query = ")
+    poc = "from shop.db import login\nif login(\"' OR '1'='1\"):\n    print('SENTINEL_PWNED')\n"
+    result = _validate(poc, SRC_LAYOUT, file, line, "SQL Injection")
+
+    assert result.evidence is Evidence.LINE_PROVEN, result.output
+    assert line in result.witness.driven_lines
 
 
 # --- the cage ----------------------------------------------------------------
