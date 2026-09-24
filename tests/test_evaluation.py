@@ -20,3 +20,37 @@ def test_perfect_scores():
 def test_metrics_add():
     total = Metrics(1, 1, 0) + Metrics(2, 0, 1)
     assert (total.tp, total.fp, total.fn) == (3, 1, 1)
+
+# --- class matching: decides what counts as a true positive ---------------------
+
+import pytest
+
+from sentinel.evaluation import _class_matches
+
+
+@pytest.mark.parametrize("a, b", [
+    ("SQL Injection", "SQL injection via f-string"),
+    ("SQL Injection", "SQLi in login query"),
+    ("Path Traversal", "Directory Traversal"),
+    ("Command Injection", "OS command injection"),
+    ("Insecure Deserialization", "Unsafe deserialization of untrusted data"),
+    ("Hardcoded Secret", "Hard-coded credentials"),
+    ("Cross-Site Scripting", "XSS"),
+    ("Server-Side Request Forgery", "SSRF"),
+])
+def test_same_class_phrased_differently_matches(a, b):
+    assert _class_matches(a, b)
+    assert _class_matches(b, a)
+
+
+@pytest.mark.parametrize("a, b", [
+    ("SQL Injection", "Command Injection"),       # regression: shared only "injection"
+    ("Command Injection", "Code Injection"),
+    ("SQL injection via f-string", "Command injection via f-string"),
+    ("Insecure Deserialization", "Insecure Direct Object Reference"),
+    ("Remote Code Execution", "Remote Command Execution"),
+    ("Path Traversal", "SQL Injection"),
+])
+def test_different_classes_never_match(a, b):
+    assert not _class_matches(a, b)
+    assert not _class_matches(b, a)

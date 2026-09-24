@@ -16,6 +16,7 @@ get counted as a hit.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from sentinel.llm import LLMClient
@@ -26,16 +27,59 @@ from sentinel.scanner import Scanner
 __all__ = ["Metrics", "TieredMetrics", "evaluate_target", "evaluate_target_tiered"]
 
 LINE_TOLERANCE = 5
-_STOP_WORDS = {"the", "of", "a", "an", "untrusted", "data", "vulnerability", "with"}
+
+# Words that describe vulnerabilities in general rather than a class. Sharing one
+# of these says nothing: "SQL Injection" and "Command Injection" share "injection".
+_STOP_WORDS = {
+    "the", "and", "for", "from", "into", "via", "with", "using", "of",
+    "injection", "insecure", "unsafe", "untrusted", "improper", "arbitrary",
+    "remote", "execution", "vulnerability", "data", "user", "input", "attacker",
+    "controlled", "unsanitized", "possible", "potential",
+}
+
+# A class is identified by its family when its name mentions one. Two findings
+# match only if they share a family, so qualifiers ("... via f-string") can never
+# make two different classes look alike.
+CLASS_FAMILIES = {
+    "sql": {"sql", "sqli"},
+    "command": {"command", "cmdi", "shell"},
+    "code": {"code", "eval", "rce"},
+    "path": {"path", "directory", "traversal", "lfi"},
+    "deserialization": {"deserialization", "deserialisation", "pickle", "unpickling"},
+    "secret": {"hardcoded", "secret", "secrets", "credential", "credentials", "password"},
+    "xss": {"xss", "scripting"},
+    "ssrf": {"ssrf", "serverside"},
+    "xxe": {"xxe", "entity"},
+    "template": {"ssti", "template"},
+    "redirect": {"redirect"},
+}
+
+
+def _tokens(name: str) -> set[str]:
+    # Hyphens are dropped rather than split on, so "hard-coded" is "hardcoded"
+    # and "server-side" is "serverside".
+    return set(re.findall(r"[a-z0-9]+", name.lower().replace("-", "")))
+
+
+def _families(name: str) -> set[str]:
+    tokens = _tokens(name)
+    return {family for family, words in CLASS_FAMILIES.items() if tokens & words}
 
 
 def _keywords(name: str) -> set[str]:
-    return {w for w in name.strip().lower().split() if len(w) > 3 and w not in _STOP_WORDS}
+    return {w for w in _tokens(name) if len(w) > 2 and w not in _STOP_WORDS}
 
 
 def _class_matches(a: str, b: str) -> bool:
-    # Matching is genuinely fuzzy: models phrase classes differently
-    # ("Path Traversal" vs "Directory Traversal"), so we compare shared keywords.
+    """Do two class names describe the same kind of vulnerability?
+
+    Models phrase classes differently ("Path Traversal" vs "Directory Traversal"),
+    so exact comparison is too strict. Families decide whenever both names mention
+    one; shared distinctive keywords decide only when a name names no known family.
+    """
+    fa, fb = _families(a), _families(b)
+    if fa and fb:
+        return bool(fa & fb)
     return bool(_keywords(a) & _keywords(b))
 
 
