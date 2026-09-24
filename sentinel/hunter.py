@@ -120,11 +120,13 @@ class Hunter:
         # can yield nothing other than "the model found nothing": a reply with no
         # usable findings list, and individual entries too malformed to keep.
         self.unreadable_files: list[str] = []
+        self.unreadable_details: dict[str, dict] = {}
         self.dropped_entries = 0
 
     def hunt(self) -> list[Finding]:
         """Analyze every file in the target and return all candidate findings."""
         self.unreadable_files = []
+        self.unreadable_details = {}
         self.dropped_entries = 0
         all_findings: list[Finding] = []
         for rel_path in self.tools.list_files():
@@ -135,7 +137,16 @@ class Hunter:
     def _hunt_file(self, path: str, source: str) -> list[Finding]:
         prompt = USER_PROMPT.format(path=path, source=source)
         response = self.llm.complete(prompt=prompt, system=SYSTEM_PROMPT)
-        return self._parse(response.text, path)
+        findings = self._parse(response.text, path)
+        if path in self.unreadable_files:
+            # Enough to tell an empty, a truncated and a prose reply apart, without
+            # storing whole replies.
+            self.unreadable_details[path] = {
+                "reply_chars": len(response.text),
+                "finish_reason": getattr(response, "finish_reason", ""),
+                "excerpt": response.text[:200],
+            }
+        return findings
 
     def _parse(self, raw: str, path: str) -> list[Finding]:
         """Turn the model's JSON reply into Finding objects, tolerantly."""

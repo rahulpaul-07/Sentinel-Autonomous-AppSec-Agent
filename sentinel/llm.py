@@ -107,6 +107,9 @@ class LLMResponse:
     prompt_tokens: int
     completion_tokens: int
     cost_usd: float
+    # Why the model stopped: "stop" for a finished reply, "length" when it hit its
+    # token limit. Kept because an empty or cut-off reply is otherwise unexplainable.
+    finish_reason: str = ""
 
 
 class LLMClient:
@@ -201,7 +204,9 @@ class LLMClient:
         if response is None:  # pragma: no cover - unreachable in normal flow
             raise RuntimeError("Model call returned no response.")
 
-        text = response.choices[0].message.content or ""
+        choice = response.choices[0]
+        text = choice.message.content or ""
+        finish_reason = str(getattr(choice, "finish_reason", "") or "")
 
         usage = getattr(response, "usage", None)
         prompt_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
@@ -217,4 +222,5 @@ class LLMClient:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cost_usd=cost,
+            finish_reason=finish_reason,
         )

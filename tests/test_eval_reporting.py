@@ -132,7 +132,7 @@ def test_failed_image_build_and_untestable_findings_are_warned(monkeypatch, caps
 
     assert "WARNING: targets/vulnerable_app: dependency image failed to build" in out
     assert "WARNING: targets/vulnerable_app: 3 finding(s) not testable" in out
-    assert "measure the environment, not the method" in out
+    assert "each marks something that was not measured" in out
 
 
 # --- the evaluator reads tiers from the real report ------------------------------------
@@ -202,3 +202,5 @@ def test_no_candidates_says_whether_the_reply_was_read(monkeypatch, capsys):
     assert "no candidates (hunter reply unreadable)" in out
     assert "no candidates (model reported none)" in out
     assert "WARNING: targets/vulnerable_app: hunter reply unreadable for app.py" in out
+    # Regression: the summary used to blame image builds for any warning at all.
+    assert "failed image builds" not in out

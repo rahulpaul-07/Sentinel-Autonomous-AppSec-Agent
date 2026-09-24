@@ -239,7 +239,7 @@ worth publishing go in [`benchmarks/results/`](benchmarks/results/README.md).
 ## Tests
 
 ```bash
-pip install pytest && pytest -q     # 188 tests, about a second, offline
+pip install pytest && pytest -q     # 192 tests, about a second, offline
 pytest -m docker                    # 12 more, against a real Docker daemon
 ```
 

@@ -84,6 +84,16 @@ class ScannedFinding:
         return d
 
 
+def describe_unreadable(detail: dict | None) -> str:
+    """One phrase saying what an unreadable hunter reply looked like."""
+    if not detail:
+        return "no detail recorded"
+    body = ("empty reply" if detail.get("reply_chars") == 0
+            else f"{detail.get('reply_chars')} chars, no findings list")
+    reason = detail.get("finish_reason")
+    return f"{body}, finish_reason={reason}" if reason else body
+
+
 @dataclass
 class ScanReport:
     target: str
@@ -97,6 +107,7 @@ class ScanReport:
     # Files whose hunter reply could not be read, and findings dropped as malformed.
     # Without these, an unreadable reply looks exactly like "nothing found".
     hunter_unreadable: list[str] = field(default_factory=list)
+    hunter_unreadable_details: dict = field(default_factory=dict)
     hunter_dropped: int = 0
 
     # -- evidence-tier views ---------------------------------------------
@@ -165,9 +176,12 @@ class ScanReport:
                 env += ("  WARNING: dependency image failed to build; exploits ran in the "
                         "bare image, so missing imports grade as not testable.\n")
         if self.hunter_unreadable:
-            env += (f"  WARNING: hunter reply unreadable for {len(self.hunter_unreadable)} "
-                    f"file(s): {', '.join(self.hunter_unreadable)}. Those files were not "
-                    "analysed; no findings there does not mean none exist.\n")
+            described = ", ".join(
+                f"{f} ({describe_unreadable(self.hunter_unreadable_details.get(f))})"
+                for f in self.hunter_unreadable
+            )
+            env += (f"  WARNING: hunter reply unreadable for {described}. Those files "
+                    "were not analysed; no findings there does not mean none exist.\n")
         if self.hunter_dropped:
             env += f"  WARNING: {self.hunter_dropped} malformed finding(s) dropped.\n"
         return (
@@ -188,6 +202,7 @@ class ScanReport:
             "elapsed_seconds": round(self.elapsed_seconds, 2),
             "environment": self.environment.to_dict() if self.environment else None,
             "hunter": {"unreadable_files": self.hunter_unreadable,
+                       "details": self.hunter_unreadable_details,
                        "dropped_entries": self.hunter_dropped},
             "counts": {
                 "candidates": len(self.scanned),
@@ -259,6 +274,7 @@ class Scanner:
 
         findings = self.hunter.hunt()[: self.max_findings]
         report.hunter_unreadable = list(self.hunter.unreadable_files)
+        report.hunter_unreadable_details = dict(self.hunter.unreadable_details)
         report.hunter_dropped = self.hunter.dropped_entries
 
         for finding in findings:

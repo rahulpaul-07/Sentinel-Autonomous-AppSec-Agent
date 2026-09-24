@@ -134,6 +134,7 @@ def evaluate_target_tiered(
         tiers=dict(tiers),
         environment=report.environment.to_dict() if report.environment else None,
         hunter={"unreadable_files": report.hunter_unreadable,
+                "details": report.hunter_unreadable_details,
                 "dropped_entries": report.hunter_dropped},
     )
 

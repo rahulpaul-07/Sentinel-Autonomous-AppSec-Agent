@@ -26,6 +26,7 @@ from sentinel.llm import LLMClient
 from sentinel.metrics import Metrics
 from sentinel.evaluation import evaluate_target_tiered
 from sentinel.provenance import stamp
+from sentinel.scanner import describe_unreadable
 from sentinel.sandbox import Sandbox, SandboxUnavailable
 
 TARGETS = [
@@ -64,8 +65,11 @@ def _one_run(llm: LLMClient, build_env: bool) -> RunResult:
         per_target.append({"target": target, "tiers": m.tiers, "environment": env,
                            "hunter": hunter})
         if hunter.get("unreadable_files"):
-            warnings.append(f"{target}: hunter reply unreadable for "
-                            f"{', '.join(hunter['unreadable_files'])}; not analysed")
+            details = hunter.get("details") or {}
+            described = ", ".join(f"{f} ({describe_unreadable(details.get(f))})"
+                                  for f in hunter["unreadable_files"])
+            warnings.append(f"{target}: hunter reply unreadable for {described}; "
+                            "not analysed")
         if hunter.get("dropped_entries"):
             warnings.append(f"{target}: {hunter['dropped_entries']} malformed finding(s) dropped")
         if env.get("status") == "build_failed":
@@ -168,8 +172,8 @@ def main() -> int:
     print(f"  Precision: {_fmt_spread([r.permissive.precision for r in runs])}")
     print(f"  Recall:    {_fmt_spread([r.permissive.recall for r in runs])}")
     if any(r.warnings for r in runs):
-        print("\nSome runs had untestable findings or failed image builds (see WARNING")
-        print("lines above). Those scores measure the environment, not the method.")
+        print("\nSome runs printed WARNING lines above. Read them before quoting these")
+        print("scores: each marks something that was not measured.")
     print("\nA single run is one sample. Quote the range, not the best run.")
 
     if args.json_path:
