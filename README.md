@@ -255,7 +255,9 @@ permissive scores. A ratio with nothing to divide by prints `n/a`, never 100%. A
 with no candidates says whether the model reported none or its reply was unreadable. A
 malformed reply is requested once more; if that one is malformed too, the file is reported
 unreadable with the full reply and the parse error. The
-`--json` record carries the model, the commit and a flag for uncommitted changes; results
+`--json` record carries the model, the commit, a flag for uncommitted changes and the
+tokens each run used, and is written after every run. If a provider's usage limit stops
+the evaluation, the finished runs are kept and `--resume` completes them later; results
 worth publishing go in [`benchmarks/results/`](benchmarks/results/README.md).
 
 ### Command-line options
@@ -278,7 +280,7 @@ worth publishing go in [`benchmarks/results/`](benchmarks/results/README.md).
 ## Tests
 
 ```bash
-pip install pytest && pytest -q     # 200 tests, about a second, offline
+pip install pytest && pytest -q     # 229 tests, about a second, offline
 pytest -m docker                    # 12 more, against a real Docker daemon
 ```
 
