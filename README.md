@@ -13,8 +13,10 @@ locked-down sandbox, and **tracing whether the line it accused actually executed
 
 ![Sentinel scan report](docs/report-preview.png)
 
-> The screenshot is Sentinel's HTML report — a real artifact written by `--report`.
-> Every finding carries its evidence tier, the exploit, and the trace that graded it.
+> Sentinel's HTML report, rendered from the test suite's fixture so that every evidence
+> tier appears on one page. It is the real renderer, but not a scan result; see
+> `examples/render_sample_report.py`. Each finding carries its evidence tier, the
+> exploit, and the trace that graded it.
 
 ---
 
@@ -125,15 +127,24 @@ Measured by a reproducible harness (`evaluate.py`) against labeled ground truth:
 targets, five vulnerability classes (SQL injection, command injection, hardcoded secret,
 path traversal, insecure deserialization) plus a clean control.
 
-### Reproducibility
+> **These numbers measure the v1 validator, not the current pipeline.** They were taken
+> in August 2026, before the execution witness, the reachability gate and the evidence
+> tiers existed. The v1 validator told the model to write a *self-contained* exploit
+> that did not import the target, so every "proof" in the table reproduced the
+> vulnerability pattern in isolation. Under today's ladder that is `CLASS_ONLY` at best.
+> They are kept because they are what was measured, and because the tiered evaluator
+> exists to show how far a marker-only check overstates. The current pipeline has not
+> been benchmarked yet; `sentinel-eval --runs 5` produces that measurement.
 
-Measured August 2026. Scores vary **by model** and, even at temperature 0, **between runs
-on the same model** — hosted providers are not bit-reproducible.
+### Reproducibility (v1, August 2026)
+
+Scores vary **by model** and, even at temperature 0, **between runs on the same model**
+— hosted providers are not bit-reproducible.
 
 | Run | Model | Precision | Recall | F1 | Note |
 |---|---|---|---|---|---|
 | 1 | `gemini/gemini-3.5-flash` | 100% | 80% | 0.89 | missed insecure deserialization |
-| 2 | `groq/openai/gpt-oss-120b` | 100% | 100% | 1.00 | all five classes proven |
+| 2 | `groq/openai/gpt-oss-120b` | 100% | 100% | 1.00 | all five classes reproduced |
 | 3 | `groq/openai/gpt-oss-120b` | 71% | 100% | 0.83 | 2 false positives on the clean control |
 
 Run 2 is the **best observed** result, not the expected one. The honest summary is the
@@ -148,7 +159,7 @@ counting only line-proven findings. **The gap between those two numbers is the a
 marker-only scanner overstates.** Measuring it was not possible before the witness
 existed.
 
-### The self-correction result
+### The self-correction result (v1)
 
 Recall on the two hardest classes initially came in at 60%. Adding a self-correction loop
 to the validator — feed a failed exploit's output back to the model and retry — raised
@@ -207,21 +218,34 @@ sentinel-eval --runs 5
 ## Tests
 
 ```bash
-pip install pytest && pytest -q     # 62 tests, ~0.3s
+pip install pytest && pytest -q     # 100 tests, under a second, offline
+pytest -m docker                    # 11 more, against a real Docker daemon
 ```
 
-The whole suite runs **offline** — no Docker, no API key. The two boundaries that touch
-the outside world (the LLM and the container) are stubbed, so the full pipeline is
-exercised end to end. The witness tests go further and actually **execute** the tracing
+The default suite runs **offline** — no Docker, no API key. The two boundaries that touch
+the outside world (the LLM and the container) are stubbed, and the tests assert on how
+they are *called*, not only on what they return. A separate set marked `docker` stubs
+only the model: the real `docker run`, the security flags, the read-only mount, the
+in-container tracer and the grading all execute. CI runs both. The witness tests go further and actually **execute** the tracing
 harness in a subprocess against a real target file, proving it genuinely distinguishes an
 exploit that drives the target from one that only reproduces the pattern.
 
-Two bugs the suite caught, both pinned with regression tests:
+Bugs found in the grading, each pinned with a regression test that fails when the fix is
+reverted:
 
-* **Import-time false proof.** Importing a module executes every `def` header. With a
-  line window, a PoC that did nothing but `import app` registered as reaching a nearby
-  sink — a false proof in the exact mechanism the project's main claim rests on.
-  Definition-header lines are now excluded from witnessing.
+* **Import-time false proof.** Importing a module executes every top-level statement.
+  With a line window, a PoC that did nothing but `import app` registered as reaching
+  any nearby module-level line, including the hardcoded secret in the benchmark. The
+  first fix excluded only `def` headers; the tracer now discards every line executed
+  while the target's own module frame is on the stack.
+* **Forged proofs by basename.** Tracing matched frames by file name, so Flask's own
+  `app.py` could satisfy a claim about the target's `app.py`. Frames are now matched by
+  resolved path.
+* **Nothing was mounted.** The validator never passed the target directory to the
+  sandbox, so every exploit died on import while every stubbed test passed. The Docker
+  tests exist because of this one.
+* **Untestable graded as failed.** A missing third-party package was reported as a
+  failed exploit; it is now its own tier.
 * A section header counted rejected findings by subtracting class-only ones, but
   class-only findings are confirmed and were never in that set.
 
@@ -239,24 +263,30 @@ cd site && npm install && npm run build   # outputs to ../docs
 
 ## Limitations & roadmap
 
-* **The sandbox only has the standard library.** It runs a minimal Python image with
-  the network disabled, so a target importing Flask, Django or any third-party package
-  dies at its own import line before the exploit runs. Those claims are graded
-  `ENV_INCOMPLETE` rather than `UNPROVEN`, because "we could not test this" and "the
-  exploit failed" are different statements and conflating them would overstate the run.
-  Building a per-target image from the project's own requirements is the fix, and is on
-  the roadmap. Note the asymmetry this creates with v1: the old validator reproduced
+* **Dependencies need `--build-env`.** By default the sandbox is a bare Python image, so
+  a target importing Flask or any third-party package dies at its own import line and
+  the claim is graded `ENV_INCOMPLETE`, because "we could not test this" and "the
+  exploit failed" are different statements. `--build-env` bakes the target's declared
+  dependencies into the image at build time. It is opt-in because `pip install` runs
+  package code with network, which the sandbox does not cover. Note the asymmetry this creates with v1: the old validator reproduced
   vulnerability patterns in isolation and so never needed the target's dependencies at
   all. The new target-executing validator is strictly more honest and will report
   **lower** recall on dependency-heavy targets. That is the measurement getting better,
   not the tool getting worse.
 * **The tracer records that a line executed, not that tainted data flowed through it.**
   A line can execute with benign input. Combined with the static taint gate this is
-  strong evidence — it is not a dataflow proof. Closing that gap is the top roadmap item.
+  strong evidence — it is not a dataflow proof. Closing that gap is on the roadmap.
 * The benchmark is **five cases**. Enough to make changes measurable and catch
   regressions; not enough to quote a headline accuracy number. Real-world CVEs next.
 * The static gate is pattern-based, with no path sensitivity, no alias analysis, and no
   cross-module tracking. It deliberately fails open.
+* **Module-level findings cannot be line-proven.** Lines that run only because the module
+  was imported are never counted as a witness, so a hardcoded secret, which lives on a
+  module-level line, tops out at `CLASS_ONLY`. Execution is the wrong kind of evidence
+  for that class.
+* **Flat layouts only.** The validator imports the target by its file name from the
+  mount root, so `src/pkg/db.py` becomes `import db`, which fails in a real package.
+  This has to be fixed before real-world CVEs can be benchmarked.
 * `sys.settrace` does not see into C extensions and conflicts with debuggers or coverage
   tools sharing the hook.
 * Validation requires a running Docker daemon.
@@ -268,7 +298,8 @@ cd site && npm install && npm run build   # outputs to ../docs
 * Tiered evaluation (permissive vs. strict) to quantify marker-only overstatement
 * Self-contained HTML report with per-finding witness and gate reasoning
 * Installable package (`sentinel`, `sentinel-eval`), argparse CLI, JSON output
-* Test suite grown to 62, all offline; suite runtime cut by lazy provider imports
+* Offline test suite, plus Docker tests that exercise the real sandbox in CI
+* Per-target sandbox images built from declared dependencies (`--build-env`)
 * Built project page under `docs/`
 
 ## License

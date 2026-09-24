@@ -112,10 +112,10 @@ function Hero() {
         <div className="relative mt-12 rounded-xl">
           <Terminal title="sentinel — grading one candidate">
             <TypingAnimation delay={300} className="text-violets">
-              $ sentinel targets/vulnerable_app --report report.html
+              $ sentinel targets/vulnerable_app --build-env --report report.html
             </TypingAnimation>
             <AnimatedSpan delay={1600} className="text-muted">
-              <span><span className="text-faint">ingest</span>{"    "}AST code map · 3 modules</span>
+              <span><span className="text-faint">ingest</span>{"    "}AST code map · 1 module</span>
             </AnimatedSpan>
             <AnimatedSpan delay={2000} className="text-warn">
               <span>hunter{"    "}candidate → SQL injection · app.py:33</span>
@@ -134,7 +134,7 @@ function Hero() {
             </AnimatedSpan>
             <AnimatedSpan delay={4100} className="text-proof">
               <span className="font-bold">
-                ✓ LINE PROVEN{"  "}
+                LINE PROVEN{"  "}
                 <span className="font-normal text-ink">SQL injection · critical · fix diff written</span>
               </span>
             </AnimatedSpan>
@@ -417,15 +417,15 @@ function Results() {
   return (
     <Section
       id="results"
-      label="Results · measured August 2026"
+      label="Results · v1, measured August 2026"
       title="Every figure here is a measured range."
-      lede="Scored by a reproducible harness against labeled ground truth: four targets, five vulnerability classes, plus a clean control. Hosted providers are not bit-reproducible even at temperature 0, so the same model varies between runs."
+      lede="Scored by a reproducible harness against labeled ground truth: four targets, five vulnerability classes, plus a clean control. These runs used the v1 validator, before the execution witness existed. Hosted providers are not bit-reproducible even at temperature 0, so the same model varies between runs."
     >
       <div className="mt-10 grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat value={5} label="Vulnerability classes in the benchmark, plus a clean control" />
-        <Stat value={1.0} decimals={2} label="Best observed F1 — all five proven" tone="text-proof" />
-        <Stat value={100} suffix="%" label="Recall on the two hardest classes after the self-correction loop, up from 60%" tone="text-proof" />
-        <Stat value={60} label="Tests, all running offline — no Docker, no API key" />
+        <Stat value={71} suffix="%" label="Lowest precision across three v1 runs; the highest was 100%" />
+        <Stat value={100} suffix="%" label="v1 recall on the two hardest classes after the self-correction loop, up from 60%" />
+        <Stat value={5} label="Evidence tiers, reported separately and never collapsed into yes or no" tone="text-proof" />
       </div>
 
       <div className="mt-6 overflow-x-auto rounded-xl border border-line">
@@ -442,12 +442,12 @@ function Results() {
           </thead>
           <tbody>
             {RUNS.map((r) => (
-              <tr key={r.run} className={cn("border-t border-line", r.best && "bg-proof/[.05]")}>
+              <tr key={r.run} className="border-t border-line">
                 <td className="px-4 py-3">{r.run}</td>
                 <td className="px-4 py-3 font-mono text-[12.5px] text-violets">{r.model}</td>
-                <td className={cn("px-4 py-3", r.best && "font-semibold text-proof")}>{r.precision}</td>
-                <td className={cn("px-4 py-3", r.best && "font-semibold text-proof")}>{r.recall}</td>
-                <td className={cn("px-4 py-3", r.best && "font-semibold text-proof")}>{r.f1}</td>
+                <td className="px-4 py-3">{r.precision}</td>
+                <td className="px-4 py-3">{r.recall}</td>
+                <td className="px-4 py-3">{r.f1}</td>
                 <td className="px-4 py-3 text-faint">{r.note}</td>
               </tr>
             ))}
@@ -465,6 +465,13 @@ function Results() {
           precision drop in run 3 before either slipped past, and{" "}
           <span className="font-medium text-proof">recall on the two hardest classes rose from 60% to 100%</span>{" "}
           after the self-correction loop was added, with precision holding.
+        </p>
+        <p className="mt-4 text-[14.5px] leading-relaxed text-muted">
+          <span className="font-medium text-ink">What these runs did not measure.</span>{" "}
+          The v1 validator asked the model for a self-contained exploit that did not import
+          the target, so every success in this table reproduced the vulnerability pattern in
+          isolation. On today&rsquo;s evidence ladder that is class-only at best. The
+          current pipeline has not been benchmarked yet.
         </p>
         <p className="mt-4 text-[14.5px] leading-relaxed text-muted">
           The evaluator now scores the same scan twice — once counting any exploit that
@@ -489,13 +496,13 @@ function Report() {
       <div className="relative mt-10 overflow-hidden rounded-xl border border-line bg-surface">
         <img
           src="./report-preview.png"
-          alt="Sentinel HTML scan report showing summary tiles, severity breakdown, and a confirmed SQL injection finding with its embedded proof-of-concept exploit and fix diff."
+          alt="Sentinel HTML report rendered from a fixture, showing one line-proven SQL injection, two class-only findings, one not-testable finding and one gated-out candidate."
           className="block w-full"
           loading="lazy"
         />
         <div className="border-t border-line px-5 py-4 text-[13.5px] text-muted">
-          Generated by <code className="font-mono text-violets">sentinel targets/vulnerable_app --report report.html</code>.
-          Sample output from a labeled test target.
+          Rendered by Sentinel&rsquo;s real report code from the test suite&rsquo;s fixture, so
+          every evidence tier appears on one page. It is not a scan result.
         </div>
       </div>
     </Section>

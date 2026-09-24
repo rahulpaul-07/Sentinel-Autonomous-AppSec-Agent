@@ -1,16 +1,19 @@
 // Every number on this site comes from the project's own measured results or from
-// deterministic checks in its test suite. Nothing here is illustrative.
+// deterministic checks in its test suite. The report preview is the one rendered
+// artifact that is not a scan result, and the page says so where it is shown.
 
 export const REPO = "https://github.com/rahulpaul-07/Sentinel-Autonomous-AppSec-Agent";
 
-// Measured August 2026 across four targets / five vulnerability classes.
+// Measured August 2026 with the v1 validator, across four targets / five
+// vulnerability classes. v1 asked for self-contained exploits that did not import the
+// target, so these predate the witness and are not results for the current pipeline.
 export const RUNS = [
   { run: 1, model: "gemini/gemini-3.5-flash", precision: "100%", recall: "80%", f1: "0.89",
-    note: "missed insecure deserialization", best: false },
+    note: "missed insecure deserialization" },
   { run: 2, model: "groq/openai/gpt-oss-120b", precision: "100%", recall: "100%", f1: "1.00",
-    note: "all five classes proven", best: true },
+    note: "all five classes reproduced" },
   { run: 3, model: "groq/openai/gpt-oss-120b", precision: "71%", recall: "100%", f1: "0.83",
-    note: "2 false positives on the clean control", best: false },
+    note: "2 false positives on the clean control" },
 ];
 
 // Deterministic results from the static gate, reproduced by tests/test_reachability.py.
@@ -50,6 +53,9 @@ export const TIERS = [
   { key: "class_only", label: "Class only", tone: "warn",
     rule: "marker printed + reported line never ran",
     meaning: "The exploit proved the vulnerability class in the abstract without touching the code under test. Reported, but never counted or patched." },
+  { key: "env_incomplete", label: "Not testable", tone: "muted",
+    rule: "exploit stopped at a missing third-party import",
+    meaning: "The sandbox lacked a package the target imports, so nothing was tested. Reported on its own, never counted as a failed exploit." },
   { key: "unproven", label: "Unproven", tone: "muted",
     rule: "no marker after N self-correcting attempts",
     meaning: "The claim could not be demonstrated by a working exploit." },
@@ -62,5 +68,7 @@ export const LIMITS = [
   "The line tracer records that a line executed, not that tainted data flowed through it. Combined with the taint gate this is strong evidence; it is not a dataflow proof.",
   "The benchmark is five cases across four targets. That is enough to make changes measurable and to catch regressions — not enough to quote a headline accuracy number.",
   "The static gate is pattern-based and deliberately fails open: anything it cannot analyze proceeds to validation, so it never trades recall for a cleaner number.",
+  "Lines that run only because the module was imported never count as a witness. A hardcoded secret lives on such a line, so it tops out at class-only: execution is the wrong kind of evidence for it.",
+  "The validator imports the target by file name from the mount root, so it handles flat layouts only. Real packages need a fix before real-world CVEs can be benchmarked.",
   "sys.settrace does not see into C extensions and conflicts with debuggers or coverage tools sharing the hook.",
 ];

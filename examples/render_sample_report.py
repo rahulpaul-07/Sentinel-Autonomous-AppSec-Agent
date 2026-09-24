@@ -12,6 +12,11 @@ it as a measured run.
 Run from the project root:
 
     python -m examples.render_sample_report
+
+The screenshot at docs/report-preview.png is taken from the rendered file:
+
+    wkhtmltoimage --width 1324 docs/sample-report.html full.png
+    # then crop to 1040 px wide, centred
 """
 
 from pathlib import Path

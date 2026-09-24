@@ -36,7 +36,7 @@ export const LAB_RUNS = [
       12
     ],
     "evidence": "class_only",
-    "explain": "The exploit ran code in app.py, but never reached line 14 (nearest executed line: 12).",
+    "explain": "The exploit imported app.py, but only code that runs on import executed there. Import-time execution is not counted as reaching line 14.",
     "stdout": "SENTINEL_PWNED"
   },
   {
