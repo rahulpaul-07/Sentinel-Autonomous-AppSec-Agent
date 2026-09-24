@@ -107,6 +107,11 @@ arrives — so a gate modelling taint alone would catch nothing:
 never on ignorance. A gate that blocked whenever it was unsure would trade a large amount
 of recall for a little precision. That last row is the gate declining to guess.
 
+Concretely, it rejects in three cases only: no sink call near the line, a sink whose
+arguments are literals and nothing else, or a sink made safely. A sink fed by a function
+parameter or any value it cannot trace gets `no_known_source` and goes to validation,
+because in a library the parameter *is* the attacker's input.
+
 ### Provider-agnostic model layer
 
 The model layer runs on a local Ollama model, Groq, Gemini, Claude, or OpenAI — switched

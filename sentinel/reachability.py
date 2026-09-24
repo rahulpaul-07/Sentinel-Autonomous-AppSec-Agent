@@ -161,6 +161,10 @@ class Verdict(str, Enum):
     SAFE_USAGE = "safe_usage"
     NO_TAINT_PATH = "no_taint_path"
     NO_SINK_AT_LINE = "no_sink_at_line"
+    # A sink is there and receives data the gate can neither trace to a source nor
+    # rule out: a function parameter, a variable, a call result. In a library the
+    # parameter IS the attacker's input, so this must never reject.
+    NO_KNOWN_SOURCE = "no_known_source"
     NOT_ANALYZABLE = "not_analyzable"
 
     @property
@@ -205,6 +209,36 @@ def _dotted(node: ast.AST) -> str:
     else:
         return ""
     return ".".join(reversed(parts))
+
+
+def _call_name(func: ast.AST) -> str:
+    """Name a call for sink matching, including calls on a chained expression.
+
+    `_dotted` gives up when the chain is rooted in something other than a name, as
+    in `conn.cursor().execute(q)`. The method name is still known, and a sink we
+    cannot see is a sink the gate would wrongly report as absent.
+    """
+    dotted = _dotted(func)
+    if dotted:
+        return dotted
+    if isinstance(func, ast.Attribute):
+        return f"(...).{func.attr}"
+    return ""
+
+
+_LITERAL_NODES = (ast.Constant, ast.JoinedStr, ast.FormattedValue, ast.BinOp, ast.UnaryOp,
+                  ast.Tuple, ast.List, ast.Set, ast.Dict, ast.operator, ast.unaryop,
+                  ast.expr_context)
+
+
+def _is_literal(node: ast.AST) -> bool:
+    """True only if the expression is built from literals alone: no names, no calls.
+
+    That is the positive evidence NO_TAINT_PATH needs. A variable that happens to
+    hold a constant is not proven clean here; showing that takes def-use analysis
+    the gate does not do, so it fails open instead.
+    """
+    return all(isinstance(n, _LITERAL_NODES) for n in ast.walk(node))
 
 
 def _matches(dotted: str, patterns: set[str]) -> str:
@@ -586,7 +620,7 @@ def analyze(source: str, vuln_class: str, line: int) -> Reachability:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        dotted = _dotted(node.func)
+        dotted = _call_name(node.func)
         hit = _matches(dotted, sinks)
         if not hit:
             continue
@@ -608,6 +642,7 @@ def analyze(source: str, vuln_class: str, line: int) -> Reachability:
 
     gkey = _group_key(vuln_class)
     safe_reasons: list[str] = []
+    unresolved: list[str] = []
 
     for call, name in candidates:
         tainted_why = ""
@@ -616,6 +651,9 @@ def analyze(source: str, vuln_class: str, line: int) -> Reachability:
             if tainted_why:
                 break
         if not tainted_why:
+            args = list(call.args) + [k.value for k in call.keywords]
+            if not all(_is_literal(a) for a in args):
+                unresolved.append(f"`{name}` at line {call.lineno}")
             continue
 
         # Data arrives -- but is the call made safely?
@@ -631,6 +669,16 @@ def analyze(source: str, vuln_class: str, line: int) -> Reachability:
             sink=name,
         )
 
+    # Checked before SAFE_USAGE on purpose: one safely-made call nearby is not
+    # evidence about a different call the gate could not resolve.
+    if unresolved:
+        return Reachability(
+            Verdict.NO_KNOWN_SOURCE,
+            "; ".join(unresolved) + ": receives data the gate cannot trace to a "
+            "source or rule out, so validation decides",
+            sink=", ".join(sorted({n for _, n in candidates})),
+        )
+
     if safe_reasons:
         return Reachability(
             Verdict.SAFE_USAGE,
@@ -642,6 +690,6 @@ def analyze(source: str, vuln_class: str, line: int) -> Reachability:
     sink_names = ", ".join(sorted({n for _, n in candidates}))
     return Reachability(
         Verdict.NO_TAINT_PATH,
-        f"`{sink_names}` at line {line} receives no attacker-controlled data",
+        f"`{sink_names}` at line {line} receives only literal values",
         sink=sink_names,
     )

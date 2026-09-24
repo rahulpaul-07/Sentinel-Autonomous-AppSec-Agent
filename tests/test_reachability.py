@@ -205,3 +205,54 @@ def test_line_drift_within_tolerance_still_matches(line):
     """Models routinely report a line or two off; that must not cause rejection."""
     r = analyze(VULNERABLE_SQL, "SQL Injection", line)
     assert not r.blocks, f"line {line} was wrongly blocked: {r.reason}"
+
+
+# --- the gate must not reject what it could not model ------------------------
+#
+# The gate may reject only on positive evidence. Two holes let it reject on
+# ignorance instead: a sink called on a chained expression was invisible, so the
+# gate reported "no sink anywhere"; and a sink fed by a function parameter was
+# called unreachable, though in a library the parameter IS the attacker's input.
+
+LIBRARY_SQLI = '''
+import sqlite3
+
+def find_user(conn, name):
+    return conn.cursor().execute("SELECT * FROM users WHERE name = '" + name + "'")
+'''
+
+
+def test_sink_called_on_a_chained_expression_is_seen():
+    r = analyze(LIBRARY_SQLI, "SQL Injection", 5)
+    assert r.verdict is not Verdict.NO_SINK_AT_LINE, r.reason
+    assert "execute" in r.sink
+
+
+def test_function_parameter_reaching_a_sink_is_not_rejected():
+    r = analyze(LIBRARY_SQLI, "SQL Injection", 5)
+    assert not r.blocks, r.reason
+    assert r.verdict is Verdict.NO_KNOWN_SOURCE
+
+
+def test_variable_the_gate_cannot_resolve_fails_open():
+    """Even a variable holding a constant proceeds: proving that needs def-use analysis."""
+    src = '''
+import os
+def housekeeping():
+    cmd = "ls -la /tmp"
+    os.system(cmd)
+'''
+    assert not analyze(src, "Command Injection", 5).blocks
+
+
+def test_an_unresolved_candidate_outweighs_a_safe_one_nearby():
+    src = '''
+import subprocess
+from flask import request
+def run():
+    subprocess.run(["ls", request.args.get("d")])
+def other(extra):
+    subprocess.run("ls " + extra, shell=True)
+'''
+    r = analyze(src, "Command Injection", 5)
+    assert not r.blocks, r.reason
