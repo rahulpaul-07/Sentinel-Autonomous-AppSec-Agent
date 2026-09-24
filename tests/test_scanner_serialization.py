@@ -7,13 +7,14 @@ from tests._fixtures import sample_report
 def test_to_dict_is_json_serializable_and_complete():
     d = sample_report().to_dict()
     json.dumps(d)  # must not raise
-    # Three exploits printed the marker, but only two ran the reported line.
+    # Three exploits printed the marker, but only one drove the reported line.
     assert d["counts"]["confirmed"] == 3
-    assert d["counts"]["line_proven"] == 2
-    assert d["counts"]["class_only"] == 1
+    assert d["counts"]["line_proven"] == 1
+    assert d["counts"]["class_only"] == 2
     assert d["counts"]["gated_out"] == 1
-    # Severity counts follow the STRICT tier, so a class-only high is excluded.
-    assert d["counts"]["by_severity"] == {"critical": 1, "high": 1}
+    assert d["counts"]["not_testable"] == 1
+    # Severity counts follow the STRICT tier, so class-only highs are excluded.
+    assert d["counts"]["by_severity"] == {"critical": 1}
     assert len(d["patches"]) == 1
     # Confirmed findings carry their proof and their execution trace.
     confirmed = [s for s in d["scanned"] if s["confirmed"]]

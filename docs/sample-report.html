@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Sentinel Scan Report</title>
+<title>Sentinel sample report</title>
 <style>
 :root {
   --bg:#0a0c11; --bg2:#0e1119; --panel:#12161f; --panel2:#161b26;
@@ -138,23 +138,23 @@ footer a { color:var(--muted); text-decoration:none; border-bottom:1px dotted va
     <h1>Scan report <span class="accent">&middot; proven, not asserted</span></h1>
     <div class="meta-row">
       <span>Target <b class="mono">targets/vulnerable_app</b></span>
-      <span>Model <b class="mono">groq/openai/gpt-oss-120b</b></span>
+      <span>Model <b class="mono">illustrative fixture (no model call, not a scan result)</b></span>
       <span>Runtime <b>12.34s</b></span>
-      <span>Generated <b>2026-09-23 15:39 UTC</b></span>
+      <span>Generated <b>2026-09-24 09:03 UTC</b></span>
     </div>
   </header>
 
   <div class="tiles">
     <div class="tile"><div class="n">5</div><div class="l">Candidates</div></div>
-    <div class="tile bad"><div class="n">2</div><div class="l">Line proven</div></div>
-    <div class="tile warn"><div class="n">1</div><div class="l">Class only</div></div>
+    <div class="tile bad"><div class="n">1</div><div class="l">Line proven</div></div>
+    <div class="tile warn"><div class="n">2</div><div class="l">Class only</div></div>
     <div class="tile"><div class="n">1</div><div class="l">Not testable</div></div>
     <div class="tile"><div class="n">1</div><div class="l">No path</div></div>
     <div class="tile good"><div class="n">1</div><div class="l">Files fixed</div></div>
   </div>
-  <div class="pills"><span class="pill pill-critical">1 critical</span><span class="pill pill-high">1 high</span></div>
+  <div class="pills"><span class="pill pill-critical">1 critical</span></div>
 
-  <h2 class="section">Line-proven <span class="count">2</span></h2><p class="hint">The exploit succeeded <em>and</em> the reported line executed while it ran. These are claims demonstrated about this code.</p>
+  <h2 class="section">Line-proven <span class="count">1</span></h2><p class="hint">The exploit succeeded <em>and</em> the reported line executed while it ran. These are claims demonstrated about this code.</p>
       <article class="card proven">
         <div class="card-head">
           <div class="card-title">
@@ -189,14 +189,14 @@ print(&#x27;SENTINEL_PWNED&#x27;)
 <span class="dl del">-    query = &quot;SELECT * FROM users WHERE name = &#x27;&quot; + username + &quot;&#x27;&quot;</span>
 <span class="dl add">+    cursor.execute(&quot;SELECT * FROM users WHERE name = ?&quot;, (username,))</span></pre>
         </details>
-      </article>
-      <article class="card proven">
+      </article><h2 class="section muted-h">Class-only <span class="count">2</span></h2><p class="hint">An exploit printed the success marker, but the trace shows the reported line never executed. That proves the vulnerability <em>class</em> is exploitable, not that this line is &mdash; so these are held back from the headline count and are not patched.</p>
+      <article class="card classonly">
         <div class="card-head">
           <div class="card-title">
             <span class="sev sev-high">high</span>
             <h3>Hardcoded Secret</h3>
           </div>
-          <span class="status status-proven" title="Exploit ran and the reported line executed.">LINE PROVEN</span>
+          <span class="status status-classonly" title="Exploit succeeded, but the reported line never ran.">CLASS ONLY</span>
         </div>
         <div class="loc"><span class="mono">app.py:18</span>
           <span class="conf" title="Hunter confidence">conf 90%</span>
@@ -205,26 +205,17 @@ print(&#x27;SENTINEL_PWNED&#x27;)
         
         
         
-        <div class="witness"><span class="wlabel">Execution witness</span><span class="wyes">reached app.py:18</span> during the exploit.</div>
+        <div class="witness"><span class="wlabel">Execution witness</span><span class="wno">only imported app.py</span> &mdash; line 18 ran at import time, which is not counted as reaching it. Only the vulnerability class was demonstrated.</div>
         <details class="drawer">
-          <summary>Proof-of-concept exploit <span class="muted">&middot; 2 attempt(s)</span></summary>
+          <summary>Proof-of-concept exploit <span class="muted">&middot; 1 attempt(s)</span></summary>
           <pre class="code poc">import app
-# ... exploit ...
 print(&#x27;SENTINEL_PWNED&#x27;)
 </pre>
           <div class="micro-label">Sandbox output</div>
           <pre class="code out">SENTINEL_PWNED</pre>
         </details>
         
-        <details class="drawer">
-          <summary>Proposed secure-fix diff</summary>
-          <pre class="code diff"><span class="dl meta">--- a/app.py</span>
-<span class="dl meta">+++ b/app.py</span>
-<span class="dl meta">@@ -33 +33 @@</span>
-<span class="dl del">-    query = &quot;SELECT * FROM users WHERE name = &#x27;&quot; + username + &quot;&#x27;&quot;</span>
-<span class="dl add">+    cursor.execute(&quot;SELECT * FROM users WHERE name = ?&quot;, (username,))</span></pre>
-        </details>
-      </article><h2 class="section muted-h">Class-only <span class="count">1</span></h2><p class="hint">An exploit printed the success marker, but the trace shows the reported line never executed. That proves the vulnerability <em>class</em> is exploitable, not that this line is &mdash; so these are held back from the headline count and are not patched.</p>
+      </article>
       <article class="card classonly">
         <div class="card-head">
           <div class="card-title">
@@ -271,7 +262,9 @@ print(&#x27;SENTINEL_PWNED&#x27;)
         <details class="drawer">
           <summary>Proof-of-concept exploit <span class="muted">&middot; 3 attempt(s)</span></summary>
           <pre class="code poc">import app
-print(&#x27;SENTINEL_PWNED&#x27;)</pre>
+# ... exploit ...
+print(&#x27;SENTINEL_PWNED&#x27;)
+</pre>
           <div class="micro-label">Sandbox output</div>
           <pre class="code out">ModuleNotFoundError: No module named &#x27;flask&#x27;</pre>
         </details>

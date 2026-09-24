@@ -259,3 +259,76 @@ def test_same_named_dependency_file_cannot_forge_a_proof(tmp_path):
     assert w.available
     assert not w.file_executed               # the real target never ran
     assert not w.line_executed               # so no line proof, despite the marker
+
+
+# --- import-time execution is not exploitation ------------------------------
+#
+# Importing a module runs every top-level statement: imports, assignments,
+# `app = Flask(...)`, and any function a module-level statement calls. None of
+# that is the exploit doing anything. A PoC that only imports the target and
+# prints the marker must never be LINE_PROVEN, wherever the reported line is.
+
+MODULE_LEVEL_SOURCE = textwrap.dedent('''
+    import sqlite3
+
+    SECRET_KEY = "hunter2"
+
+    def setup():
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE users (name TEXT)")
+        return conn
+
+    DEFAULT_CONN = setup()
+
+    def login(conn, username):
+        query = "SELECT * FROM users WHERE name = '" + username + "'"
+        return conn.execute(query).fetchall()
+''').lstrip()
+
+SECRET_LINE = 3      # SECRET_KEY = ...
+SETUP_BODY_LINE = 6  # conn = sqlite3.connect(...), run by `DEFAULT_CONN = setup()`
+
+
+@pytest.fixture
+def module_level_target(tmp_path):
+    (tmp_path / "app.py").write_text(MODULE_LEVEL_SOURCE, encoding="utf-8")
+    return tmp_path
+
+
+def test_import_does_not_witness_a_module_level_line(module_level_target):
+    """Regression: `import app` executes line 3, but that proves nothing about it."""
+    proc, w = _run_harness(
+        "import app\nprint('SENTINEL_PWNED')\n", module_level_target, line=SECRET_LINE
+    )
+
+    assert "SENTINEL_PWNED" in proc.stdout
+    assert w.available
+    assert SECRET_LINE in w.executed_lines      # it did run...
+    assert not w.line_executed                  # ...but only because of the import
+
+
+def test_function_called_during_import_does_not_witness(module_level_target):
+    """A sink reached only because a module-level statement called it is import-time."""
+    proc, w = _run_harness(
+        "import app\nprint('SENTINEL_PWNED')\n", module_level_target, line=SETUP_BODY_LINE
+    )
+
+    assert "SENTINEL_PWNED" in proc.stdout
+    assert not w.line_executed
+
+
+def test_calling_the_function_after_import_does_witness(module_level_target):
+    """The same line counts once the exploit itself drives it."""
+    proc, w = _run_harness(
+        "import app\napp.setup()\nprint('SENTINEL_PWNED')\n",
+        module_level_target, line=SETUP_BODY_LINE,
+    )
+
+    assert w.line_executed
+
+
+def test_import_only_run_is_explained_as_such(module_level_target):
+    _, w = _run_harness("import app\n", module_level_target, line=SECRET_LINE)
+
+    assert "import" in w.explain().lower()
+    assert w.nearest_line is None   # no line the exploit itself drove

@@ -90,3 +90,12 @@ def test_each_finding_reports_its_own_witness_line():
     secret_card = html.split("Hardcoded Secret")[1].split("</article>")[0]
     assert "app.py:18" in secret_card
     assert "app.py:33" not in secret_card
+
+
+def test_import_only_witness_is_not_described_as_running_code():
+    """A secret that ran only on import must say so, not "ran code in app.py"."""
+    html = render_html(sample_report())
+    secret_card = html.split("Hardcoded Secret")[1].split("</article>")[0]
+    assert "CLASS ONLY" in secret_card
+    assert "only imported app.py" in secret_card
+    assert "ran code in app.py" not in secret_card

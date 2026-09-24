@@ -72,8 +72,19 @@ def _witness_block(val: dict) -> str:
             "No trace was captured for this run.</div>"
         )
     tf, tl = _esc(w.get("target_file", "")), _esc(w.get("target_line", ""))
+    executed = w.get("executed_lines") or []
+    import_only = set(w.get("import_only_lines") or [])
+    driven = [n for n in executed if n not in import_only]
     if w.get("line_executed"):
         body = f'<span class="wyes">reached {tf}:{tl}</span> during the exploit.'
+    elif w.get("file_executed") and not driven:
+        # Everything that ran in the file ran because it was imported. Saying "ran
+        # code in app.py" here would imply the exploit drove it, which it did not.
+        body = (
+            f'<span class="wno">only imported {tf}</span> &mdash; line {tl} ran at '
+            "import time, which is not counted as reaching it. Only the vulnerability "
+            "class was demonstrated."
+        )
     elif w.get("file_executed"):
         near = w.get("nearest_line")
         near_txt = f" (nearest executed line {near})" if near else ""
