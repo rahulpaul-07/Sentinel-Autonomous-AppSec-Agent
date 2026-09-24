@@ -203,12 +203,18 @@ pip install -e .                   # installs the package + `sentinel` command
 # 2. Configure a model
 cp .env.example .env               # Windows: Copy-Item .env.example .env
 
-# 3. Scan a target, and write a self-contained HTML report
-sentinel targets/vulnerable_app --report report.html --open
+# 3. Scan a target, and write a self-contained HTML report (Docker must be running;
+#    --build-env installs the target's Flask dependency into the sandbox image)
+sentinel targets/vulnerable_app --build-env --report report.html --open
 
 # 4. Measure accuracy — average five runs and report the spread
 sentinel-eval --runs 5
 ```
+
+`sentinel-eval` needs Docker running and refuses to start without it; otherwise every
+exploit would fail to launch and score like a model that found nothing. Each run prints,
+per target, the sandbox image and how every candidate was graded, then the strict and
+permissive scores. A ratio with nothing to divide by prints `n/a`, never 100%.
 
 ### Command-line options
 
@@ -230,7 +236,7 @@ sentinel-eval --runs 5
 ## Tests
 
 ```bash
-pip install pytest && pytest -q     # 167 tests, about a second, offline
+pip install pytest && pytest -q     # 177 tests, about a second, offline
 pytest -m docker                    # 12 more, against a real Docker daemon
 ```
 

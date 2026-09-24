@@ -21,7 +21,11 @@ Definitions:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+
+def _round(value: float | None) -> float | None:
+    return None if value is None else round(value, 4)
 
 
 @dataclass
@@ -30,20 +34,24 @@ class Metrics:
     fp: int = 0
     fn: int = 0
 
+    # A ratio with a zero denominator is undefined, and is reported as None. It
+    # used to be 1.0, so a run that confirmed nothing printed "Precision: 100%".
     @property
-    def precision(self) -> float:
+    def precision(self) -> float | None:
         denom = self.tp + self.fp
-        return self.tp / denom if denom else 1.0
+        return self.tp / denom if denom else None
 
     @property
-    def recall(self) -> float:
+    def recall(self) -> float | None:
         denom = self.tp + self.fn
-        return self.tp / denom if denom else 1.0
+        return self.tp / denom if denom else None
 
     @property
-    def f1(self) -> float:
-        p, r = self.precision, self.recall
-        return 2 * p * r / (p + r) if (p + r) else 0.0
+    def f1(self) -> float | None:
+        # 2TP / (2TP + FP + FN): equal to the harmonic mean of precision and recall
+        # wherever both exist, and still defined (as 0) when nothing was confirmed.
+        denom = 2 * self.tp + self.fp + self.fn
+        return 2 * self.tp / denom if denom else None
 
     def __add__(self, other: "Metrics") -> "Metrics":
         return Metrics(self.tp + other.tp, self.fp + other.fp, self.fn + other.fn)
@@ -53,9 +61,9 @@ class Metrics:
             "tp": self.tp,
             "fp": self.fp,
             "fn": self.fn,
-            "precision": round(self.precision, 4),
-            "recall": round(self.recall, 4),
-            "f1": round(self.f1, 4),
+            "precision": _round(self.precision),
+            "recall": _round(self.recall),
+            "f1": _round(self.f1),
         }
 
 
@@ -76,15 +84,23 @@ class TieredMetrics:
 
     permissive: Metrics
     strict: Metrics
+    # How every candidate was graded, and the sandbox image the exploits ran in.
+    # Without these, "nothing was tested" and "the model missed everything" print
+    # the same score.
+    tiers: dict = field(default_factory=dict)
+    environment: dict | None = None
 
     @property
-    def overstatement(self) -> float:
+    def overstatement(self) -> float | None:
         """How much precision the marker-only reading claims but cannot support."""
-        return self.permissive.precision - self.strict.precision
+        p, s = self.permissive.precision, self.strict.precision
+        return None if p is None or s is None else p - s
 
     def to_dict(self) -> dict:
         return {
             "permissive": self.permissive.to_dict(),
             "strict": self.strict.to_dict(),
-            "precision_overstatement": round(self.overstatement, 4),
+            "precision_overstatement": _round(self.overstatement),
+            "tiers": self.tiers,
+            "environment": self.environment,
         }

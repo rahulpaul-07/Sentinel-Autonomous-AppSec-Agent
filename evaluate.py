@@ -18,11 +18,14 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import sys
+from collections import Counter
 from dataclasses import dataclass
 
 from sentinel.llm import LLMClient
 from sentinel.metrics import Metrics
-from sentinel.evaluation import evaluate_target
+from sentinel.evaluation import evaluate_target_tiered
+from sentinel.sandbox import Sandbox, SandboxUnavailable
 
 TARGETS = [
     "targets/vulnerable_app",
@@ -31,34 +34,69 @@ TARGETS = [
     "targets/deserialize_app",
 ]
 
+# Order the tiers print in, strongest evidence first.
+TIER_ORDER = ["line_proven", "class_only", "unproven", "env_incomplete", "unreachable"]
+TIER_LABELS = {"line_proven": "line-proven", "class_only": "class-only",
+               "unproven": "unproven", "env_incomplete": "not testable",
+               "unreachable": "gated out"}
+
 
 @dataclass
 class RunResult:
-    precision: float
-    recall: float
-    f1: float
-    tp: int
-    fp: int
-    fn: int
+    strict: Metrics
+    permissive: Metrics
+    tiers: dict            # summed over targets
+    targets: list          # per target: name, tiers, environment
+    warnings: list
 
 
 def _one_run(llm: LLMClient, build_env: bool) -> RunResult:
-    total = Metrics()
+    strict, permissive = Metrics(), Metrics()
+    tiers: Counter = Counter()
+    per_target, warnings = [], []
     for target in TARGETS:
-        total = total + evaluate_target(llm, target, build_env=build_env)
-    return RunResult(total.precision, total.recall, total.f1, total.tp, total.fp, total.fn)
+        m = evaluate_target_tiered(llm, target, build_env=build_env)
+        strict, permissive = strict + m.strict, permissive + m.permissive
+        tiers.update(m.tiers)
+        env = m.environment or {}
+        per_target.append({"target": target, "tiers": m.tiers, "environment": env})
+        if env.get("status") == "build_failed":
+            warnings.append(f"{target}: dependency image failed to build; exploits ran bare")
+        if m.tiers.get("env_incomplete"):
+            warnings.append(f"{target}: {m.tiers['env_incomplete']} finding(s) not testable")
+    return RunResult(strict, permissive, dict(tiers), per_target, warnings)
 
 
-def _fmt_spread(values: list[float], pct: bool = True) -> str:
-    lo, hi = min(values), max(values)
-    mean = statistics.mean(values)
-    if pct:
-        if lo == hi:
-            return f"{mean:.0%}"
-        return f"{mean:.0%}  (range {lo:.0%}-{hi:.0%})"
-    if lo == hi:
-        return f"{mean:.2f}"
-    return f"{mean:.2f}  (range {lo:.2f}-{hi:.2f})"
+def _pct(value) -> str:
+    return "n/a" if value is None else f"{value:.0%}"
+
+
+def _num(value) -> str:
+    return "n/a" if value is None else f"{value:.2f}"
+
+
+def _tier_line(tiers: dict) -> str:
+    parts = [f"{TIER_LABELS[t]} {tiers[t]}" for t in TIER_ORDER if tiers.get(t)]
+    return ", ".join(parts) if parts else "no candidates"
+
+
+def _fmt_spread(values: list, pct: bool = True) -> str:
+    """Mean and min-max over the runs where the ratio is defined. Says when it wasn't."""
+    fmt = _pct if pct else _num
+    defined = [v for v in values if v is not None]
+    if not defined:
+        return "n/a (undefined in every run: nothing to divide by)"
+    lo, hi, mean = min(defined), max(defined), statistics.mean(defined)
+    text = fmt(mean) if lo == hi else f"{fmt(mean)}  (range {fmt(lo)}-{fmt(hi)})"
+    missing = len(values) - len(defined)
+    if missing:
+        text += f"  [undefined in {missing} of {len(values)} runs]"
+    return text
+
+
+def _score_line(m: Metrics) -> str:
+    return (f"TP={m.tp} FP={m.fp} FN={m.fn}  "
+            f"P={_pct(m.precision)} R={_pct(m.recall)} F1={_num(m.f1)}")
 
 
 def main() -> int:
@@ -72,6 +110,15 @@ def main() -> int:
                          "Flask, so this grades them all not testable.")
     args = ap.parse_args()
 
+    # Without Docker every exploit fails to start and is graded UNPROVEN, which
+    # scores exactly like a model that found nothing. Refuse rather than print that.
+    try:
+        Sandbox.preflight()
+    except SandboxUnavailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        print("Start Docker and re-run. No model calls were made.", file=sys.stderr)
+        return 3
+
     llm = LLMClient()
     runs: list[RunResult] = []
 
@@ -79,26 +126,37 @@ def main() -> int:
         print(f"=== Run {i}/{args.runs} ===")
         r = _one_run(llm, build_env=not args.no_build_env)
         runs.append(r)
-        print(f"   TP={r.tp} FP={r.fp} FN={r.fn}  "
-              f"P={r.precision:.0%} R={r.recall:.0%} F1={r.f1:.2f}\n")
+        for t in r.targets:
+            env = t["environment"]
+            image = f"{env.get('image', '?')} ({env.get('status', '?')})" if env else "?"
+            print(f"   {t['target']:<26} {image}")
+            print(f"   {'':<26} {_tier_line(t['tiers'])}")
+        print(f"   strict (line-proven):     {_score_line(r.strict)}")
+        print(f"   permissive (marker only): {_score_line(r.permissive)}")
+        for w in r.warnings:
+            print(f"   WARNING: {w}")
+        print()
 
     print("==================  SUMMARY  ==================")
-    if args.runs == 1:
-        r = runs[0]
-        print(f"Precision: {r.precision:.0%}")
-        print(f"Recall:    {r.recall:.0%}")
-        print(f"F1 score:  {r.f1:.2f}")
-    else:
-        print(f"Runs:      {args.runs}")
-        print(f"Precision: {_fmt_spread([r.precision for r in runs])}")
-        print(f"Recall:    {_fmt_spread([r.recall for r in runs])}")
-        print(f"F1 score:  {_fmt_spread([r.f1 for r in runs], pct=False)}")
-        print("\nA single run is one sample. The spread above is the honest picture;")
-        print("do not quote the best run as the expected result.")
+    print(f"Runs:      {args.runs}")
+    print("Strict (line-proven only):")
+    print(f"  Precision: {_fmt_spread([r.strict.precision for r in runs])}")
+    print(f"  Recall:    {_fmt_spread([r.strict.recall for r in runs])}")
+    print(f"  F1 score:  {_fmt_spread([r.strict.f1 for r in runs], pct=False)}")
+    print("Permissive (marker printed, what a marker-only tool reports):")
+    print(f"  Precision: {_fmt_spread([r.permissive.precision for r in runs])}")
+    print(f"  Recall:    {_fmt_spread([r.permissive.recall for r in runs])}")
+    if any(r.warnings for r in runs):
+        print("\nSome runs had untestable findings or failed image builds (see WARNING")
+        print("lines above). Those scores measure the environment, not the method.")
+    print("\nA single run is one sample. Quote the range, not the best run.")
 
     if args.json_path:
         with open(args.json_path, "w", encoding="utf-8") as fh:
-            json.dump([r.__dict__ for r in runs], fh, indent=2)
+            json.dump([{
+                "strict": r.strict.to_dict(), "permissive": r.permissive.to_dict(),
+                "tiers": r.tiers, "targets": r.targets, "warnings": r.warnings,
+            } for r in runs], fh, indent=2)
         print(f"\nRaw metrics written to {args.json_path}")
 
     return 0

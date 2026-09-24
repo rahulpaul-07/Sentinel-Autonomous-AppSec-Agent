@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from pathlib import Path
 
 from sentinel.llm import LLMClient
@@ -126,9 +127,12 @@ def evaluate_target_tiered(
     scanner = Scanner(llm, target, build_env=build_env)
     report = scanner.scan(patch=False)
 
+    tiers = Counter(s.evidence.value for s in report.scanned)
     return TieredMetrics(
         permissive=_score([s.finding for s in report.confirmed], truths),
         strict=_score([s.finding for s in report.line_proven], truths),
+        tiers=dict(tiers),
+        environment=report.environment.to_dict() if report.environment else None,
     )
 
 
