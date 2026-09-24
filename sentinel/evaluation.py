@@ -65,7 +65,9 @@ def _score(findings: list[Finding], truths: list[dict]) -> Metrics:
     return Metrics(tp=tp, fp=fp, fn=fn)
 
 
-def evaluate_target_tiered(llm: LLMClient, target: str) -> TieredMetrics:
+def evaluate_target_tiered(
+    llm: LLMClient, target: str, build_env: bool = False
+) -> TieredMetrics:
     """Score a target at both readings of "confirmed".
 
     The same scan is scored twice -- once counting every finding whose exploit
@@ -77,7 +79,7 @@ def evaluate_target_tiered(llm: LLMClient, target: str) -> TieredMetrics:
         (Path(target) / "ground_truth.json").read_text(encoding="utf-8")
     )["vulnerabilities"]
 
-    scanner = Scanner(llm, target)
+    scanner = Scanner(llm, target, build_env=build_env)
     report = scanner.scan(patch=False)
 
     return TieredMetrics(
@@ -86,6 +88,6 @@ def evaluate_target_tiered(llm: LLMClient, target: str) -> TieredMetrics:
     )
 
 
-def evaluate_target(llm: LLMClient, target: str) -> Metrics:
+def evaluate_target(llm: LLMClient, target: str, build_env: bool = False) -> Metrics:
     """Headline score: the strict reading (line-proven findings only)."""
-    return evaluate_target_tiered(llm, target).strict
+    return evaluate_target_tiered(llm, target, build_env=build_env).strict

@@ -42,10 +42,10 @@ class RunResult:
     fn: int
 
 
-def _one_run(llm: LLMClient) -> RunResult:
+def _one_run(llm: LLMClient, build_env: bool) -> RunResult:
     total = Metrics()
     for target in TARGETS:
-        total = total + evaluate_target(llm, target)
+        total = total + evaluate_target(llm, target, build_env=build_env)
     return RunResult(total.precision, total.recall, total.f1, total.tp, total.fp, total.fn)
 
 
@@ -66,6 +66,10 @@ def main() -> int:
     ap.add_argument("--runs", type=int, default=1, help="How many full passes to average.")
     ap.add_argument("--json", metavar="PATH", dest="json_path",
                     help="Write raw per-run metrics to PATH.")
+    ap.add_argument("--no-build-env", action="store_true",
+                    help="Run exploits in the bare image instead of building each "
+                         "target's declared dependencies. Every benchmark target imports "
+                         "Flask, so this grades them all not testable.")
     args = ap.parse_args()
 
     llm = LLMClient()
@@ -73,7 +77,7 @@ def main() -> int:
 
     for i in range(1, args.runs + 1):
         print(f"=== Run {i}/{args.runs} ===")
-        r = _one_run(llm)
+        r = _one_run(llm, build_env=not args.no_build_env)
         runs.append(r)
         print(f"   TP={r.tp} FP={r.fp} FN={r.fn}  "
               f"P={r.precision:.0%} R={r.recall:.0%} F1={r.f1:.2f}\n")

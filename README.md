@@ -199,6 +199,7 @@ sentinel-eval --runs 5
 | `--no-gate` | Disable the static reachability gate (validate every candidate) |
 | `--show-class-only` | List findings whose exploit never reached the reported line |
 | `--min-confidence F` | Skip validating candidates below this hunter confidence |
+| `--build-env` | Build a sandbox image with the target's declared dependencies (opt-in: runs `pip install` with network) |
 | `--yes` | Auto-apply every proposed fix without prompting |
 
 ---

@@ -25,9 +25,9 @@ import pytest
 
 from sentinel.evidence import Evidence
 from sentinel.hunter import Finding
-from sentinel.llm import LLMResponse
 from sentinel.sandbox import Sandbox
 from sentinel.validator import Validator
+from tests.integration._support import FixedPocLLM
 
 pytestmark = pytest.mark.docker
 
@@ -47,18 +47,6 @@ def _line_of(path: Path, needle: str) -> int:
 SINK_LINE = _line_of(TARGET / "app.py", "query = ")
 SECRET_LINE = _line_of(TARGET / "app.py", "API_TOKEN = ")
 YAML_SINK_LINE = _line_of(NEEDS_DEP / "app.py", "yaml.load(")
-
-
-class FixedPocLLM:
-    """Stands in for the model only. Always returns the same exploit."""
-
-    model = "fixed/poc"
-
-    def __init__(self, poc: str) -> None:
-        self.poc = poc
-
-    def complete(self, prompt, system=None):
-        return LLMResponse(text=self.poc, prompt_tokens=0, completion_tokens=0, cost_usd=0.0)
 
 
 def _validate(poc: str, target: Path, file: str, line: int, vuln_class: str):

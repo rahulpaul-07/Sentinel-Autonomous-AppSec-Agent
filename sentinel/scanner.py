@@ -38,6 +38,7 @@ from sentinel.llm import LLMClient
 from sentinel.tools import Tools
 from sentinel.hunter import Hunter, Finding
 from sentinel.sandbox import Sandbox
+from sentinel.environment import Environment, prepare_environment
 from sentinel.validator import Validator, ValidationResult
 from sentinel.patcher import Patcher, Patch
 from sentinel.evidence import Evidence
@@ -90,6 +91,9 @@ class ScanReport:
     patches: list[Patch] = field(default_factory=list)
     model: str = ""
     elapsed_seconds: float = 0.0
+    # The image the exploits ran in. Recorded on every report so a result can be
+    # reproduced, and so a reader can tell a dependency gap from a failed exploit.
+    environment: Environment | None = None
 
     # -- evidence-tier views ---------------------------------------------
 
@@ -150,9 +154,16 @@ class ScanReport:
         return dict(counts)
 
     def summary(self) -> str:
+        env = ""
+        if self.environment is not None:
+            env = f"  Sandbox image:        {self.environment.image} ({self.environment.status})\n"
+            if self.environment.status == "build_failed":
+                env += ("  WARNING: dependency image failed to build; exploits ran in the "
+                        "bare image, so missing imports grade as not testable.\n")
         return (
             f"Target: {self.target}\n"
-            f"  Candidate findings:   {len(self.scanned)}\n"
+            + env
+            + f"  Candidate findings:   {len(self.scanned)}\n"
             f"  Gated out (no path):  {len(self.gated_out)}\n"
             f"  Line-proven:          {len(self.line_proven)}\n"
             f"  Class-only:           {len(self.class_only)}\n"
@@ -165,6 +176,7 @@ class ScanReport:
             "target": self.target,
             "model": self.model,
             "elapsed_seconds": round(self.elapsed_seconds, 2),
+            "environment": self.environment.to_dict() if self.environment else None,
             "counts": {
                 "candidates": len(self.scanned),
                 "line_proven": len(self.line_proven),
@@ -198,12 +210,16 @@ class Scanner:
         max_findings: int = 20,
         min_confidence: float = 0.0,
         use_reachability_gate: bool = True,
+        build_env: bool = False,
     ) -> None:
         self.llm = llm
         self.target = target
         self.max_findings = max_findings
         self.min_confidence = min_confidence
         self.use_reachability_gate = use_reachability_gate
+        # Opt-in: building runs `pip install` for the target's dependencies with
+        # network. See sentinel/environment.py for why that is a trust decision.
+        self.build_env = build_env
         self.tools = Tools(target)
         self.hunter = Hunter(llm, self.tools)
         self.validator = Validator(llm, Sandbox(), target=target)
@@ -212,6 +228,15 @@ class Scanner:
     def scan(self, validate: bool = True, patch: bool = True) -> ScanReport:
         started = time.perf_counter()
         report = ScanReport(target=self.target, model=self.llm.model)
+
+        if validate:
+            if self.build_env:
+                report.environment = prepare_environment(
+                    self.target, base=self.validator.sandbox.image
+                )
+                self.validator.sandbox.image = report.environment.image
+            else:
+                report.environment = Environment(image=self.validator.sandbox.image)
 
         findings = self.hunter.hunt()[: self.max_findings]
 

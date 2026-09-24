@@ -48,6 +48,10 @@ def _parse_args() -> argparse.Namespace:
                    help="also list findings whose exploit never reached the reported line")
     p.add_argument("--min-confidence", type=float, default=0.0, metavar="F",
                    help="Skip validating candidates below this hunter confidence (0-1).")
+    p.add_argument("--build-env", action="store_true",
+                   help="Build a sandbox image with the target's declared dependencies "
+                        "(runs pip install with network; use only on code you trust "
+                        "enough to install).")
     p.add_argument("--yes", action="store_true",
                    help="Auto-apply every proposed fix without prompting (use with care).")
     return p.parse_args()
@@ -80,6 +84,7 @@ def main() -> int:
         target,
         min_confidence=args.min_confidence,
         use_reachability_gate=not args.no_gate,
+        build_env=args.build_env,
     )
     report = scanner.scan(validate=validate, patch=patch)
 
