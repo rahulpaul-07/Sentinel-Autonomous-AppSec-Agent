@@ -80,9 +80,17 @@ def _extract_json_object(raw: str) -> dict | None:
     respecting string literals and escapes) until the matching '}' closes it. That
     yields exactly one balanced object, which is what the model was asked for.
     """
+    return _parse_json_object(raw)[0]
+
+
+REPLY_CAP = 4000   # chars of an unreadable reply kept as evidence
+
+
+def _parse_json_object(raw: str) -> tuple[dict | None, str]:
+    """Like `_extract_json_object`, but also say why nothing came out."""
     start = raw.find("{")
     if start == -1:
-        return None
+        return None, "no JSON object in reply"
 
     depth = 0
     in_string = False
@@ -106,10 +114,24 @@ def _extract_json_object(raw: str) -> dict | None:
             if depth == 0:
                 candidate = raw[start : i + 1]
                 try:
-                    return json.loads(candidate)
-                except json.JSONDecodeError:
-                    return None
-    return None
+                    return json.loads(candidate), ""
+                except json.JSONDecodeError as exc:
+                    return None, f"invalid JSON: {exc}"
+    return None, "unbalanced braces: no complete JSON object"
+
+
+def _read_findings(raw: str) -> tuple[list | None, str]:
+    """The reply's findings list, or None and the reason there isn't one.
+
+    Only an explicit `"findings": []` means the model looked and found nothing.
+    """
+    data, error = _parse_json_object(raw)
+    if data is None:
+        return None, error
+    items = data.get("findings") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return None, "JSON object has no 'findings' list"
+    return items, ""
 
 
 class Hunter:
@@ -121,12 +143,15 @@ class Hunter:
         # usable findings list, and individual entries too malformed to keep.
         self.unreadable_files: list[str] = []
         self.unreadable_details: dict[str, dict] = {}
+        # Files whose first reply was malformed and whose second one was used.
+        self.retried_files: list[str] = []
         self.dropped_entries = 0
 
     def hunt(self) -> list[Finding]:
         """Analyze every file in the target and return all candidate findings."""
         self.unreadable_files = []
         self.unreadable_details = {}
+        self.retried_files = []
         self.dropped_entries = 0
         all_findings: list[Finding] = []
         for rel_path in self.tools.list_files():
@@ -137,27 +162,36 @@ class Hunter:
     def _hunt_file(self, path: str, source: str) -> list[Finding]:
         prompt = USER_PROMPT.format(path=path, source=source)
         response = self.llm.complete(prompt=prompt, system=SYSTEM_PROMPT)
-        findings = self._parse(response.text, path)
-        if path in self.unreadable_files:
-            # Enough to tell an empty, a truncated and a prose reply apart, without
-            # storing whole replies.
+        items, error = _read_findings(response.text)
+        attempts = 1
+
+        if items is None:
+            # Malformed replies are random: the same prompt that produced `}]]}` once
+            # parsed in 12 of 13 attempts. Asking again is model-agnostic and never
+            # guesses at what a broken reply meant, which repairing it would.
+            response = self.llm.complete(prompt=prompt, system=SYSTEM_PROMPT)
+            items, error = _read_findings(response.text)
+            attempts = 2
+            if items is not None:
+                self.retried_files.append(path)
+
+        if items is None:
+            self.unreadable_files.append(path)
+            # The whole reply, not a head excerpt: parse failures are usually at
+            # the end. These replies are short; the cap only guards against a
+            # runaway one.
             self.unreadable_details[path] = {
                 "reply_chars": len(response.text),
                 "finish_reason": getattr(response, "finish_reason", ""),
-                "excerpt": response.text[:200],
+                "parse_error": error,
+                "attempts": attempts,
+                "reply": response.text[:REPLY_CAP],
             }
-        return findings
-
-    def _parse(self, raw: str, path: str) -> list[Finding]:
-        """Turn the model's JSON reply into Finding objects, tolerantly."""
-        data = _extract_json_object(raw)
-        items = data.get("findings") if isinstance(data, dict) else None
-        if not isinstance(items, list):
-            # Not "nothing found": the reply said nothing we could read. Only an
-            # explicit `"findings": []` means the model looked and found nothing.
-            self.unreadable_files.append(path)
             return []
+        return self._findings(items, path)
 
+    def _findings(self, items: list, path: str) -> list[Finding]:
+        """Turn parsed finding entries into Finding objects, counting any dropped."""
         findings: list[Finding] = []
         for item in items:
             try:

@@ -89,9 +89,14 @@ def describe_unreadable(detail: dict | None) -> str:
     if not detail:
         return "no detail recorded"
     body = ("empty reply" if detail.get("reply_chars") == 0
-            else f"{detail.get('reply_chars')} chars, no findings list")
-    reason = detail.get("finish_reason")
-    return f"{body}, finish_reason={reason}" if reason else body
+            else f"{detail.get('reply_chars')} chars")
+    if detail.get("parse_error"):
+        body += f": {detail['parse_error']}"
+    if detail.get("finish_reason"):
+        body += f", finish_reason={detail['finish_reason']}"
+    if detail.get("attempts"):
+        body += f", {detail['attempts']} attempts"
+    return body
 
 
 @dataclass
@@ -108,6 +113,7 @@ class ScanReport:
     # Without these, an unreadable reply looks exactly like "nothing found".
     hunter_unreadable: list[str] = field(default_factory=list)
     hunter_unreadable_details: dict = field(default_factory=dict)
+    hunter_retried: list[str] = field(default_factory=list)
     hunter_dropped: int = 0
 
     # -- evidence-tier views ---------------------------------------------
@@ -203,6 +209,7 @@ class ScanReport:
             "environment": self.environment.to_dict() if self.environment else None,
             "hunter": {"unreadable_files": self.hunter_unreadable,
                        "details": self.hunter_unreadable_details,
+                       "retried_files": self.hunter_retried,
                        "dropped_entries": self.hunter_dropped},
             "counts": {
                 "candidates": len(self.scanned),
@@ -275,6 +282,7 @@ class Scanner:
         findings = self.hunter.hunt()[: self.max_findings]
         report.hunter_unreadable = list(self.hunter.unreadable_files)
         report.hunter_unreadable_details = dict(self.hunter.unreadable_details)
+        report.hunter_retried = list(self.hunter.retried_files)
         report.hunter_dropped = self.hunter.dropped_entries
 
         for finding in findings:

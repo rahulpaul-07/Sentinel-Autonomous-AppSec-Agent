@@ -162,6 +162,7 @@ def test_tiered_evaluation_counts_every_candidate_and_records_the_image(monkeypa
     assert m.tiers == {"line_proven": 1, "class_only": 1, "env_incomplete": 1,
                        "unreachable": 1}
     assert m.environment["status"] == "cached"
+    assert m.hunter["retried_files"] == []
     assert m.strict.tp == 1           # SQLi at 33 matches ground truth
     assert m.permissive.tp == 2       # plus the class-only secret at 18
 

@@ -26,3 +26,13 @@ def test_trailing_second_object_is_ignored():
 
 def test_no_json_returns_none():
     assert _extract_json_object("no json here at all") is None
+
+
+
+def test_parse_errors_are_named():
+    from sentinel.hunter import _parse_json_object
+    assert _parse_json_object("no json")[1] == "no JSON object in reply"
+    assert _parse_json_object('{"findings": [')[1] == "unbalanced braces: no complete JSON object"
+    obj, err = _parse_json_object('{"findings": [{"a": 1}]]}')
+    assert obj is None and err.startswith("invalid JSON: Expecting ',' delimiter")
+    assert _parse_json_object('{"findings": []}') == ({"findings": []}, "")

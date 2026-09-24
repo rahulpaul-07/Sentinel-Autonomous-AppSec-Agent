@@ -215,7 +215,9 @@ sentinel-eval --runs 5
 exploit would fail to launch and score like a model that found nothing. Each run prints,
 per target, the sandbox image and how every candidate was graded, then the strict and
 permissive scores. A ratio with nothing to divide by prints `n/a`, never 100%. A target
-with no candidates says whether the model reported none or its reply was unreadable. The
+with no candidates says whether the model reported none or its reply was unreadable. A
+malformed reply is requested once more; if that one is malformed too, the file is reported
+unreadable with the full reply and the parse error. The
 `--json` record carries the model, the commit and a flag for uncommitted changes; results
 worth publishing go in [`benchmarks/results/`](benchmarks/results/README.md).
 
@@ -239,7 +241,7 @@ worth publishing go in [`benchmarks/results/`](benchmarks/results/README.md).
 ## Tests
 
 ```bash
-pip install pytest && pytest -q     # 192 tests, about a second, offline
+pip install pytest && pytest -q     # 200 tests, about a second, offline
 pytest -m docker                    # 12 more, against a real Docker daemon
 ```
 
