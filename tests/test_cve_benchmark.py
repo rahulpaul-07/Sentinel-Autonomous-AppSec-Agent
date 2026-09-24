@@ -419,3 +419,27 @@ def test_runner_drives_the_real_scanner_with_the_case_image(origin, tmp_path, mo
     assert docker_runs and all("python:3.11-slim" in cmd for cmd in docker_runs)
     # No witness record came back, so a marker alone is class-only, never line-proven.
     assert record["results"][0]["outcome"] == "class_only"
+
+
+def test_a_usage_limit_stops_the_benchmark_instead_of_failing_every_case(origin, tmp_path):
+    """Recorded per case, a quota would mark every remaining case as broken."""
+    from sentinel.llm import QuotaExhausted
+
+    repo, vulnerable, fixed = origin
+    calls = []
+
+    class LimitedScanner:
+        def __init__(self, llm, target, **kwargs):
+            pass
+
+        def scan(self, patch=True):
+            calls.append(1)
+            raise QuotaExhausted("stub/model", 900.0, "tokens per day")
+
+    cases = [_case(id=f"CVE-2099-000{i}", repo=repo.as_uri(), vulnerable_commit=vulnerable,
+                   fixed_commit=fixed, sink={"file": "src/proj/db.py", "line": 1})
+             for i in (1, 2)]
+    with pytest.raises(QuotaExhausted):
+        run_benchmark(cases, _LLM(), runs=1, cache_dir=tmp_path / "cache",
+                      scanner_factory=LimitedScanner)
+    assert len(calls) == 1

@@ -46,11 +46,49 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-# Providers often say exactly how long to wait: "Please try again in 10.68s".
-# Obeying that beats guessing.
-_RETRY_HINT = re.compile(r"try again in ([\d.]+)\s*s", re.IGNORECASE)
+# Providers often say exactly how long to wait, in whatever units fit: "Please try
+# again in 10.68s", or on a daily limit "try again in 16m11.568s". Obeying that
+# beats guessing. The old pattern read only the seconds form, so a daily limit's
+# hint was ignored and the client retried a wait of minutes after one second.
+_RETRY_HINT = re.compile(
+    r"try again in\s+((?:\d+(?:\.\d+)?\s*(?:ms|h|m|s)\s*)+)", re.IGNORECASE
+)
+_HINT_PART = re.compile(r"(\d+(?:\.\d+)?)\s*(ms|h|m|s)", re.IGNORECASE)
+_UNIT_SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
 
+# The longest a single retry will wait. A provider asking for longer than this is
+# reporting a quota that will not clear during a run, so waiting is pointless.
 MAX_BACKOFF_SECONDS = 60.0
+
+
+def parse_retry_hint(text: str) -> float | None:
+    """Seconds the provider asked us to wait, or None if it did not say."""
+    match = _RETRY_HINT.search(text or "")
+    if not match:
+        return None
+    return sum(float(n) * _UNIT_SECONDS[unit.lower()]
+               for n, unit in _HINT_PART.findall(match.group(1)))
+
+
+class QuotaExhausted(RuntimeError):
+    """The provider will not serve another request until long after a retry would.
+
+    Deliberately not a subclass of any rate-limit error: code that retries rate
+    limits must not retry this.
+    """
+
+    def __init__(self, model: str, retry_after: float, detail: str) -> None:
+        self.model = model
+        self.retry_after = retry_after
+        self.detail = detail
+        super().__init__(f"{model}: usage limit reached, retry in {retry_after:.0f}s: {detail}")
+
+    def summary(self) -> str:
+        minutes, seconds = divmod(int(round(self.retry_after)), 60)
+        hours, minutes = divmod(minutes, 60)
+        wait = (f"{hours}h {minutes}m" if hours else
+                f"{minutes}m {seconds}s" if minutes else f"{seconds}s")
+        return f"{self.model} usage limit reached; the provider says try again in {wait}"
 
 _litellm = None  # cached module handle; imported on first real use
 _env_loaded = False
@@ -143,6 +181,21 @@ class LLMClient:
         # which is longer than most rate-limit windows.
         self.max_retries = max_retries
 
+        # Running totals over every successful call, so a caller can say what a
+        # piece of work cost and whether the next one fits in a daily budget.
+        self._calls = 0
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
+
+    def usage(self) -> dict:
+        """Calls and tokens used by this client so far."""
+        return {
+            "calls": self._calls,
+            "prompt_tokens": self._prompt_tokens,
+            "completion_tokens": self._completion_tokens,
+            "total_tokens": self._prompt_tokens + self._completion_tokens,
+        }
+
     # ------------------------------------------------------------------ helpers
 
     def _backoff_seconds(self, error: Exception, attempt: int) -> float:
@@ -152,10 +205,10 @@ class LLMClient:
         4s, 8s -- plus a little random jitter so parallel callers don't all wake up
         and retry in the same instant.
         """
-        hint = _RETRY_HINT.search(str(error))
-        if hint:
+        hint = parse_retry_hint(str(error))
+        if hint is not None:
             # Small cushion on top of the stated delay: their clock and ours differ.
-            return min(float(hint.group(1)) + 0.5, MAX_BACKOFF_SECONDS)
+            return min(hint + 0.5, MAX_BACKOFF_SECONDS)
         return min(2.0 ** attempt + random.uniform(0, 0.5), MAX_BACKOFF_SECONDS)
 
     # --------------------------------------------------------------- public API
@@ -189,6 +242,11 @@ class LLMClient:
                 )
                 break
             except retryable as exc:
+                hint = parse_retry_hint(str(exc))
+                if hint is not None and hint > MAX_BACKOFF_SECONDS:
+                    # A daily or monthly quota. Retrying in seconds cannot succeed;
+                    # it only turns a clear stop into a crash a minute later.
+                    raise QuotaExhausted(self.model, hint, str(exc)) from exc
                 if attempt == self.max_retries:
                     logger.error(
                         "Model call failed after %d retries: %s", self.max_retries, exc
@@ -211,6 +269,9 @@ class LLMClient:
         usage = getattr(response, "usage", None)
         prompt_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
         completion_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
+        self._calls += 1
+        self._prompt_tokens += prompt_tokens or 0
+        self._completion_tokens += completion_tokens or 0
 
         try:
             cost = litellm.completion_cost(completion_response=response)

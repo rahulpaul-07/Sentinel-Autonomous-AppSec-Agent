@@ -118,8 +118,10 @@ The model layer runs on a local Ollama model, Groq, Gemini, Claude, or OpenAI �
 with one line in `.env`. Developed across Ollama, Gemini and Groq without a code change.
 
 **Resilience.** Rate limits (429), capacity spikes (503) and dropped connections are
-retried with exponential backoff, honouring the provider's own `retry-in` hint. Errors
-retrying can't fix — a bad key, an unknown model — fail immediately.
+retried with exponential backoff, honouring the provider's own `retry-in` hint in any
+unit. When that hint asks for more than a minute, as a daily token quota does, the call
+stops at once with the wait the provider gave, instead of retrying something that cannot
+clear. Errors retrying can't fix — a bad key, an unknown model — fail immediately.
 
 **Fail-fast sandbox.** Docker being *installed* is not the daemon *running*. A preflight
 check turns that into one clear error instead of a scan that appears to find nothing.

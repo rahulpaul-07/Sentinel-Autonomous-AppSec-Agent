@@ -71,8 +71,14 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 3
 
-    record = run_benchmark(cases, LLMClient(), args.runs, args.cache,
-                           manifest_bytes=manifest.read_bytes())
+    from sentinel.llm import QuotaExhausted
+    try:
+        record = run_benchmark(cases, LLMClient(), args.runs, args.cache,
+                               manifest_bytes=manifest.read_bytes())
+    except QuotaExhausted as exc:
+        print(f"Stopped: {exc.summary()}. Nothing was recorded; re-run once the "
+              "limit clears.", file=sys.stderr)
+        return 4
 
     print(f"{'case':<22}{'run':>4}  {'vulnerable':<15}{'fixed: line-proven':<20}note")
     for r in record["results"]:
