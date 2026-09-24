@@ -89,6 +89,7 @@ class TieredMetrics:
     # the same score.
     tiers: dict = field(default_factory=dict)
     environment: dict | None = None
+    hunter: dict | None = None
 
     @property
     def overstatement(self) -> float | None:
@@ -103,4 +104,5 @@ class TieredMetrics:
             "precision_overstatement": _round(self.overstatement),
             "tiers": self.tiers,
             "environment": self.environment,
+            "hunter": self.hunter,
         }

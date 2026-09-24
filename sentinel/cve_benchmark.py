@@ -29,11 +29,11 @@ import json
 import re
 import subprocess
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from sentinel.evaluation import LINE_TOLERANCE, _class_matches
 from sentinel.evidence import Evidence
+from sentinel.provenance import stamp
 
 SCHEMA_VERSION = 1
 
@@ -313,16 +313,6 @@ def spread(per_run: list[dict]) -> dict:
 
 # --- running -----------------------------------------------------------------------
 
-def _sentinel_revision() -> dict:
-    here = Path(__file__).resolve().parent.parent
-    try:
-        commit = _git(here, "rev-parse", "HEAD")
-        dirty = bool(_git(here, "status", "--porcelain"))
-    except (RuntimeError, OSError):
-        return {"commit": "", "dirty": None}
-    return {"commit": commit, "dirty": dirty}
-
-
 def run_benchmark(cases: list[CveCase], llm, runs: int, cache_dir: str | Path,
                   scanner_factory=None, manifest_bytes: bytes = b"") -> dict:
     """Scan every case, vulnerable and fixed, `runs` times. Returns the full record."""
@@ -332,9 +322,7 @@ def run_benchmark(cases: list[CveCase], llm, runs: int, cache_dir: str | Path,
 
     cache = Path(cache_dir)
     record = {
-        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "model": getattr(llm, "model", ""),
-        "sentinel": _sentinel_revision(),
+        **stamp(getattr(llm, "model", "")),
         "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest() if manifest_bytes else "",
         "runs": runs,
         "rules": {"line_tolerance": LINE_TOLERANCE, "schema": SCHEMA_VERSION},

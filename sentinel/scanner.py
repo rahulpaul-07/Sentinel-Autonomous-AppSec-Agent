@@ -94,6 +94,10 @@ class ScanReport:
     # The image the exploits ran in. Recorded on every report so a result can be
     # reproduced, and so a reader can tell a dependency gap from a failed exploit.
     environment: Environment | None = None
+    # Files whose hunter reply could not be read, and findings dropped as malformed.
+    # Without these, an unreadable reply looks exactly like "nothing found".
+    hunter_unreadable: list[str] = field(default_factory=list)
+    hunter_dropped: int = 0
 
     # -- evidence-tier views ---------------------------------------------
 
@@ -160,6 +164,12 @@ class ScanReport:
             if self.environment.status == "build_failed":
                 env += ("  WARNING: dependency image failed to build; exploits ran in the "
                         "bare image, so missing imports grade as not testable.\n")
+        if self.hunter_unreadable:
+            env += (f"  WARNING: hunter reply unreadable for {len(self.hunter_unreadable)} "
+                    f"file(s): {', '.join(self.hunter_unreadable)}. Those files were not "
+                    "analysed; no findings there does not mean none exist.\n")
+        if self.hunter_dropped:
+            env += f"  WARNING: {self.hunter_dropped} malformed finding(s) dropped.\n"
         return (
             f"Target: {self.target}\n"
             + env
@@ -177,6 +187,8 @@ class ScanReport:
             "model": self.model,
             "elapsed_seconds": round(self.elapsed_seconds, 2),
             "environment": self.environment.to_dict() if self.environment else None,
+            "hunter": {"unreadable_files": self.hunter_unreadable,
+                       "dropped_entries": self.hunter_dropped},
             "counts": {
                 "candidates": len(self.scanned),
                 "line_proven": len(self.line_proven),
@@ -246,6 +258,8 @@ class Scanner:
                 report.environment = Environment(image=self.validator.sandbox.image)
 
         findings = self.hunter.hunt()[: self.max_findings]
+        report.hunter_unreadable = list(self.hunter.unreadable_files)
+        report.hunter_dropped = self.hunter.dropped_entries
 
         for finding in findings:
             # Confidence gate: don't spend validation on noise the hunter dismissed.

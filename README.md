@@ -214,7 +214,10 @@ sentinel-eval --runs 5
 `sentinel-eval` needs Docker running and refuses to start without it; otherwise every
 exploit would fail to launch and score like a model that found nothing. Each run prints,
 per target, the sandbox image and how every candidate was graded, then the strict and
-permissive scores. A ratio with nothing to divide by prints `n/a`, never 100%.
+permissive scores. A ratio with nothing to divide by prints `n/a`, never 100%. A target
+with no candidates says whether the model reported none or its reply was unreadable. The
+`--json` record carries the model, the commit and a flag for uncommitted changes; results
+worth publishing go in [`benchmarks/results/`](benchmarks/results/README.md).
 
 ### Command-line options
 
@@ -236,7 +239,7 @@ permissive scores. A ratio with nothing to divide by prints `n/a`, never 100%.
 ## Tests
 
 ```bash
-pip install pytest && pytest -q     # 177 tests, about a second, offline
+pip install pytest && pytest -q     # 188 tests, about a second, offline
 pytest -m docker                    # 12 more, against a real Docker daemon
 ```
 

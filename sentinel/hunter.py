@@ -116,9 +116,16 @@ class Hunter:
     def __init__(self, llm: LLMClient, tools: Tools) -> None:
         self.llm = llm
         self.tools = tools
+        # An empty result has to be explainable. These record the two ways a reply
+        # can yield nothing other than "the model found nothing": a reply with no
+        # usable findings list, and individual entries too malformed to keep.
+        self.unreadable_files: list[str] = []
+        self.dropped_entries = 0
 
     def hunt(self) -> list[Finding]:
         """Analyze every file in the target and return all candidate findings."""
+        self.unreadable_files = []
+        self.dropped_entries = 0
         all_findings: list[Finding] = []
         for rel_path in self.tools.list_files():
             source = self.tools.read_file(rel_path)
@@ -133,11 +140,15 @@ class Hunter:
     def _parse(self, raw: str, path: str) -> list[Finding]:
         """Turn the model's JSON reply into Finding objects, tolerantly."""
         data = _extract_json_object(raw)
-        if data is None:
+        items = data.get("findings") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            # Not "nothing found": the reply said nothing we could read. Only an
+            # explicit `"findings": []` means the model looked and found nothing.
+            self.unreadable_files.append(path)
             return []
 
         findings: list[Finding] = []
-        for item in data.get("findings", []):
+        for item in items:
             try:
                 findings.append(
                     Finding(
@@ -150,6 +161,8 @@ class Hunter:
                     )
                 )
             except (KeyError, ValueError, TypeError):
-                # Skip a malformed entry rather than crashing the whole run.
+                # Skip a malformed entry rather than crashing the whole run, but
+                # count it so the loss is visible.
+                self.dropped_entries += 1
                 continue
         return findings

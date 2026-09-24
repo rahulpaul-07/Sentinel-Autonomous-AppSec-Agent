@@ -78,13 +78,19 @@ def _tiered(strict, permissive, tiers, status="built"):
                          environment={"image": "sentinel-env:abc", "status": status})
 
 
-def _run_main(monkeypatch, capsys, per_target):
+CLEAN = {"started_at": "2026-09-24T00:00:00+00:00", "model": "stub/model",
+         "sentinel": {"commit": "a" * 40, "dirty": False}}
+
+
+def _run_main(monkeypatch, capsys, per_target, argv=(), provenance=CLEAN):
     calls = iter(per_target)
     monkeypatch.setattr(evaluate.Sandbox, "preflight", staticmethod(lambda: None))
     monkeypatch.setattr(evaluate, "LLMClient", lambda: object())
+    # Pinned, so the test does not depend on the state of the checkout it runs in.
+    monkeypatch.setattr(evaluate, "stamp", lambda model: dict(provenance))
     monkeypatch.setattr(evaluate, "evaluate_target_tiered",
                         lambda llm, target, build_env: next(calls))
-    monkeypatch.setattr("sys.argv", ["sentinel-eval"])
+    monkeypatch.setattr("sys.argv", ["sentinel-eval", *argv])
     assert evaluate.main() == 0
     return capsys.readouterr().out
 
@@ -158,3 +164,41 @@ def test_tiered_evaluation_counts_every_candidate_and_records_the_image(monkeypa
     assert m.environment["status"] == "cached"
     assert m.strict.tp == 1           # SQLi at 33 matches ground truth
     assert m.permissive.tp == 2       # plus the class-only secret at 18
+
+
+# --- provenance and unreadable hunter replies -----------------------------------------
+
+def _quiet():
+    return _tiered(Metrics(0, 0, 1), Metrics(0, 0, 1), {})
+
+
+def test_results_file_records_model_commit_and_dirty_flag(monkeypatch, capsys, tmp_path):
+    import json
+    out_file = tmp_path / "r.json"
+    _run_main(monkeypatch, capsys, [_quiet()] * 4, argv=["--json", str(out_file)])
+
+    record = json.loads(out_file.read_text(encoding="utf-8"))
+    assert record["model"] == "stub/model"
+    assert record["sentinel"] == {"commit": "a" * 40, "dirty": False}
+    assert record["build_env"] is True
+    assert len(record["runs"]) == 1 and "strict" in record["runs"][0]
+
+
+def test_uncommitted_changes_are_flagged(monkeypatch, capsys):
+    dirty = dict(CLEAN, sentinel={"commit": "b" * 40, "dirty": True})
+    out = _run_main(monkeypatch, capsys, [_quiet()] * 4, provenance=dirty)
+    assert "UNCOMMITTED CHANGES" in out
+    assert "cannot be tied to it" in out
+
+
+def test_no_candidates_says_whether_the_reply_was_read(monkeypatch, capsys):
+    unreadable = _quiet()
+    unreadable.hunter = {"unreadable_files": ["app.py"], "dropped_entries": 0}
+    read_fine = _quiet()
+    read_fine.hunter = {"unreadable_files": [], "dropped_entries": 0}
+
+    out = _run_main(monkeypatch, capsys, [unreadable, read_fine, _quiet(), _quiet()])
+
+    assert "no candidates (hunter reply unreadable)" in out
+    assert "no candidates (model reported none)" in out
+    assert "WARNING: targets/vulnerable_app: hunter reply unreadable for app.py" in out
