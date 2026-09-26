@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sentinel-appsec"
-version = "0.2.0"
+version = "0.3.0"
 description = "Autonomous AppSec agent that finds, proves, and fixes source-code vulnerabilities."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"

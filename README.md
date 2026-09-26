@@ -10,6 +10,8 @@ Sentinel is an AI agent that **finds, proves, and fixes** security vulnerabiliti
 source code. Unlike a typical AI scanner that *claims* bugs, Sentinel proves each one
 by generating a proof-of-concept exploit, running it against the real code in a
 locked-down sandbox, and **tracing whether the line it accused actually executed**.
+Then it replays that exploit against its own fix, and only calls the fix verified if
+the patched code ran and the exploit no longer worked.
 
 ![Sentinel scan report](docs/report-preview.png)
 
@@ -77,10 +79,16 @@ flowchart TD
     E -->|marker + line executed| F[LINE_PROVEN]
     E -->|marker, line never ran| CO[CLASS_ONLY]
     E -->|no marker after N retries| U[UNPROVEN]
-    F --> H[Patcher<br/>secure-fix diff]
-    H --> I[Human approval gate]
+    F --> H[Patcher<br/>one fix per file, must parse]
+    H --> V{Replay the proving exploit<br/>against a patched copy}
+    V -->|code ran, exploit failed| VF[fix VERIFIED]
+    V -->|exploit still works| VS[STILL EXPLOITABLE]
+    V -->|exploit never reached the code| VI[INCONCLUSIVE]
+    VF --> I[Human approval gate<br/>--yes applies verified fixes only]
+    VS --> I
+    VI --> I
     I --> J[Scan report + tiered metrics]
-    J --> K[HTML / JSON output]
+    J --> K[HTML / JSON / SARIF]
 ```
 
 ### The reachability gate
@@ -100,17 +108,26 @@ arrives — so a gate modelling taint alone would catch nothing:
 | SQL Injection | `vulnerable_app/app.py:33` | reachable | attacker data reaches `cursor.execute` |
 | Command Injection | `vulnerable_app/app.py:45` | reachable | attacker data reaches `os.system` |
 | SQL Injection | `safe_app/app.py:26` | **safe usage** | constant query with bound parameters |
-| Command Injection | `safe_app/app.py:34` | **safe usage** | argument vector, `shell=False` |
+| Command Injection | `safe_app/app.py:34` | **safe usage** | argument vector, no shell, program is not a shell |
 | Hardcoded Secret | `safe_app/app.py:17` | not analyzable | env-var read is not a literal — **fails open** |
 
 **The gate fails open by design.** It may reject only on positive evidence of no path,
 never on ignorance. A gate that blocked whenever it was unsure would trade a large amount
 of recall for a little precision. That last row is the gate declining to guess.
 
-Concretely, it rejects in three cases only: no sink call near the line, a sink whose
-arguments are literals and nothing else, or a sink made safely. A sink fed by a function
-parameter or any value it cannot trace gets `no_known_source` and goes to validation,
-because in a library the parameter *is* the attacker's input.
+Concretely, it rejects in three cases only: no sink call near the line *and* no call
+there receiving attacker data, a sink whose arguments are literals and nothing else, or
+a sink made safely. A sink fed by a function parameter or any value it cannot trace gets
+`no_known_source` and goes to validation, because in a library the parameter *is* the
+attacker's input.
+
+"Made safely" is checked soundly. Sanitizers are resolved through the file's imports
+(`shlex.quote` is one; `urllib.parse.quote` is not), and a call counts as sanitized only
+if a second taint pass, with the sanitizers treated as clean, finds no tainted argument
+-- so `f"ls {quote(a)} {b}"` is not safe. `realpath` and `resolve` are deliberately not
+path sanitizers: they canonicalize a path, they do not confine it. An argument vector is
+shell-free only if `shell` is absent or literally `False` and the program is not itself a
+shell.
 
 ### Provider-agnostic model layer
 
@@ -128,7 +145,50 @@ check turns that into one clear error instead of a scan that appears to find not
 
 ---
 
+## Security model
+
+Sentinel runs two kinds of untrusted input: the **exploit**, which a model wrote, and
+the **target**, which is code nobody has vetted -- the whole point of a scanner. The
+target is pasted into prompts, so it can carry instructions for the model reading it.
+
+| Boundary | Control | Pinned by |
+|---|---|---|
+| Exploit vs. host | `--network none`, read-only root, 64 MB tmpfs, `--cap-drop ALL`, `--user 65534`, `no-new-privileges`, memory/swap/CPU/PID caps, 1 MB output cap inside the container, 20 s timeout | `tests/integration/test_sandbox_docker.py` |
+| Exploit vs. its own grade | per-run nonce on the trace record, tracer state in closures, record written to a private descriptor, pre-execution screen for frame/trace-hook/`os._exit`/`__main__` access | `tests/test_witness_integrity.py` |
+| Target vs. model | untrusted text fenced with random delimiters, untrusted-data notice in every system prompt, model output normalised to a fixed schema | `tests/test_untrusted_output.py` |
+| Target vs. host files | symlinks never followed out of the target; virtualenvs and build output never read | `tests/test_tools.py` |
+| Report vs. reader | every field escaped; `Content-Security-Policy: default-src 'none'` | `tests/test_untrusted_output.py` |
+| Fix vs. codebase | fix must parse and change something; verified by replaying the exploit; `--yes` applies verified fixes only | `tests/test_fix_loop.py` |
+
+`--build-env` is the one deliberate hole: `pip install` runs package code with network
+while the image is built. It is opt-in for that reason.
+
+### Audit, September 2026
+
+A review of the pipeline against the model above. Each finding was reproduced against
+the prior code first, and each fix ships with a test that fails when it is reverted.
+
+| Severity | Finding | Fix |
+|---|---|---|
+| Critical | An exploit that never called the vulnerable function could be graded `LINE_PROVEN`: print a record-shaped line and `os._exit` before the harness wrote its own (the parser kept the last record), or `import __main__` and add the sink line to the tracer's module-level hit set. | Nonce-authenticated record, state in closures, private output descriptor, pre-execution screen. |
+| High | The gate rejected real bugs before any exploit ran: `realpath` treated as containment, one quoted argument excusing another, `["sh", "-c", x]` treated as shell-free, `subprocess.getoutput` and `from os import system` treated as "no sink". | Sound sanitizer check, import resolution, fail open on unmodelled tainted calls, wider sink catalogue. |
+| High | Model-supplied severity reached the HTML report unescaped. | Escaping, fixed severity vocabulary at parse time, CSP. |
+| High | A target containing `--- END CODE ---` could close its own prompt block. | Random per-block fences. |
+| Medium | Only the first proven bug per file was patched; an empty or unparseable reply was offered and applied by `--yes`; on Windows, applying a fix rewrote every line ending. | One fix per file for every finding, parse check, exploit replay, `--yes` verified-only, line endings kept. |
+| Medium | Benchmark targets carried comments naming each bug and its line, which the model read. | Hints removed with line numbers kept; a test fails if they return. |
+| Medium | Exploits ran as root in the container; output was captured unbounded; model calls had no timeout. | Unprivileged user, in-container output cap, 180 s request timeout. |
+| Medium | Scans read virtualenvs (one model call per file), a dangling symlink aborted the hunt, and a symlink out of the target would have sent its contents to the model provider. | Shared discovery walk; out-of-target links skipped and reported. |
+| Low | `--max-findings` dropped candidates silently; a project stored under a directory named `build` was mapped as empty. | Overflow recorded on the report; ignore rules apply inside the target only. |
+| Deps | `aiohttp 3.14.1` (PYSEC-2026-3545/3546/3547); site toolchain `postcss 8.4.49` (two high), `esbuild` via `vite 5`. | `aiohttp 3.14.3`, `postcss 8.5.28`, `vite 6.4.3`. CI now runs `pip-audit` and `npm audit`. |
+
+---
+
 ## Results
+
+> **Re-measurement pending.** Every figure below predates the September 2026 audit. The
+> benchmark targets then carried comments naming each bug, which the hunter could read,
+> and the gate and witness fixes change grading. They are kept as the record of what was
+> measured; the next run on the current code will be added to `benchmarks/results/`.
 
 Measured by a reproducible harness (`evaluate.py`) against labeled ground truth: four
 targets, five vulnerability classes (SQL injection, command injection, hardcoded secret,
@@ -244,6 +304,9 @@ cp .env.example .env               # Windows: Copy-Item .env.example .env
 #    --build-env installs the target's Flask dependency into the sandbox image)
 sentinel targets/vulnerable_app --build-env --report report.html --open
 
+#    In CI: SARIF for code scanning, and fail the job on a proven high/critical bug
+sentinel src/ --no-patch --sarif sentinel.sarif --fail-on high
+
 # 4. Measure accuracy — average five runs and report the spread
 sentinel-eval --runs 5
 ```
@@ -264,25 +327,54 @@ worth publishing go in [`benchmarks/results/`](benchmarks/results/README.md).
 
 | Flag | Effect |
 |---|---|
-| `--report PATH` | Write a self-contained HTML report (no external requests) |
+| `--report PATH` | Write a self-contained HTML report (no script, no external requests) |
 | `--json PATH` | Write machine-readable JSON results |
-| `--open` | Open the HTML report when done |
+| `--sarif PATH` | Write SARIF 2.1.0: line-proven findings as errors, class-only as warnings, nothing weaker |
+| `--open` | Open the HTML report when done (needs `--report`) |
+| `--fail-on SEVERITY` | Exit 1 if a line-proven finding is at or above `low`/`medium`/`high`/`critical`; unknown severity fails closed |
 | `--no-validate` | Skip sandbox validation (findings stay `UNPROVEN`) |
 | `--no-patch` | Do not generate secure-fix diffs |
+| `--no-verify-fix` | Do not replay the proving exploit against a proposed fix |
 | `--no-gate` | Disable the static reachability gate (validate every candidate) |
 | `--show-class-only` | List findings whose exploit never reached the reported line |
 | `--min-confidence F` | Skip validating candidates below this hunter confidence |
+| `--max-findings N` | Grade at most N candidates, highest confidence first; the rest are listed on the report |
 | `--build-env` | Build a sandbox image with the target's declared dependencies (opt-in: runs `pip install` with network) |
-| `--yes` | Auto-apply every proposed fix without prompting |
+| `--yes` | Apply fixes without prompting -- only fixes whose replayed exploit no longer succeeds |
+
+Exit codes: `0` done, `1` a finding met `--fail-on`, `2` bad arguments or no model
+configured, `3` Docker unusable, `4` the provider's usage limit stopped the scan, `5` the
+provider refused the request (bad key, unknown model, outage after retries).
+`SENTINEL_LLM_TIMEOUT` sets the per-request model timeout (default 180 s).
+
+A minimal GitHub Actions step:
+
+```yaml
+- name: Sentinel
+  env:
+    SENTINEL_MODEL: groq/openai/gpt-oss-120b
+    GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+  run: |
+    pip install git+https://github.com/rahulpaul-07/Sentinel-Autonomous-AppSec-Agent
+    sentinel src/ --no-patch --sarif sentinel.sarif --fail-on high
+- uses: github/codeql-action/upload-sarif@v3
+  if: always()
+  with:
+    sarif_file: sentinel.sarif
+```
 
 ---
 
 ## Tests
 
 ```bash
-pip install pytest && pytest -q     # 229 tests, about a second, offline
-pytest -m docker                    # 12 more, against a real Docker daemon
+pip install -e ".[dev]" && pytest -q   # 338 tests, a few seconds, offline
+pytest -m docker                       # 15 more, against a real Docker daemon
+ruff check                             # lint, including bandit security rules
 ```
+
+CI also runs `pip-audit` on the pinned lockfile and `npm audit` on the site, and checks
+that the analysis modules import with nothing but pytest installed.
 
 The default suite runs **offline** — no Docker, no API key. The two boundaries that touch
 the outside world (the LLM and the container) are stubbed, and the tests assert on how
@@ -310,6 +402,9 @@ reverted:
   failed exploit; it is now its own tier.
 * A section header counted rejected findings by subtracting class-only ones, but
   class-only findings are confirmed and were never in that set.
+* **Self-graded proofs.** See the [September 2026 audit](#audit-september-2026): an
+  exploit could forge its own trace record. Pinned by `tests/test_witness_integrity.py`,
+  which runs each forgery through the real harness.
 
 ---
 
@@ -352,6 +447,15 @@ cd site && npm install && npm run build   # outputs to ../docs
   imports the dotted path from there, so `src/pkg/db.py` is `pkg.db`. Namespace packages
   (no `__init__.py`) are imported from the file's own directory, which breaks relative
   imports inside them.
+* **The tracer shares the exploit's interpreter.** The nonce, the closure-held state
+  and the screen stop accidental and naively injected forgery; they do not make an
+  in-process tracer tamper-proof against an exploit engineered to evade the screen.
+  Tracing from outside the process is on the roadmap.
+* **Prompt injection is reduced, not removed.** Fencing makes it harder for the target to
+  address the model, but the model still reads it. An injected *finding* still has to be
+  proven by execution; an injected "report nothing" is the residual risk.
+* **Fix verification is a regression check, not a proof of absence.** It shows the exploits
+  that proved the finding no longer work against the patched code; another exploit might.
 * `sys.settrace` does not see into C extensions and conflicts with debuggers or coverage
   tools sharing the hook.
 * Validation requires a running Docker daemon.
@@ -368,6 +472,17 @@ cd site && npm install && npm run build   # outputs to ../docs
 * Imports resolved from the package tree, so `src/pkg/db.py` is `pkg.db`
 * CVE benchmark harness with pre-registered scoring (`sentinel-cve`), no cases yet
 * Built project page under `docs/`
+
+## Shipped in the September 2026 audit
+
+* Witness integrity: nonce-authenticated trace records and a pre-execution screen
+* Sound sanitizer handling and fail-open behaviour for unmodelled calls in the gate
+* Fix verification by exploit replay; one fix per file covering every proven finding
+* SARIF 2.1.0 export and `--fail-on` for CI; clean exit codes
+* Prompt fencing, output normalisation, report CSP, unprivileged sandbox, output caps
+* Benchmark targets stripped of answer-key comments
+* ruff (with bandit rules), `pip-audit` and `npm audit` in CI
+* Project page rebuilt; see [CHANGELOG.md](CHANGELOG.md)
 
 ## License
 

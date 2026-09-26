@@ -78,7 +78,9 @@ jobs:
         run: |
           python -c "
           from sentinel.reachability import analyze
-          from sentinel.witness import build_harness, parse_witness
+          from sentinel.witness import build_harness, parse_witness, screen_poc
+          from sentinel.sarif import to_sarif
+          from sentinel.prompting import fence
           from sentinel.evidence import Evidence
           from sentinel.metrics import Metrics, TieredMetrics
           import sys
@@ -87,7 +89,7 @@ jobs:
           "
 
       - name: Run the offline logic tests
-        run: pytest tests/test_reachability.py tests/test_witness.py -v
+        run: pytest tests/test_reachability.py tests/test_witness.py tests/test_witness_integrity.py -v
 
   site:
     name: Project page builds
@@ -115,3 +117,45 @@ jobs:
             git status --porcelain docs/
             exit 1
           fi
+
+  lint:
+    name: Lint (ruff, incl. bandit rules)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install "ruff>=0.14,<0.15"
+
+      - name: Lint
+        run: ruff check
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Audit the Python lockfile
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Audit the site's lockfile
+        working-directory: site
+        run: npm audit --audit-level=moderate
