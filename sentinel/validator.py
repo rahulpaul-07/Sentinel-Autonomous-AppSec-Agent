@@ -33,9 +33,16 @@ from sentinel.llm import LLMClient
 from sentinel.sandbox import Sandbox
 from sentinel.hunter import Finding
 from sentinel.evidence import Evidence
-from sentinel.witness import build_harness, parse_witness, strip_witness, WitnessResult
+from sentinel.prompting import UNTRUSTED_NOTICE, fence
+from sentinel.witness import (
+    WitnessResult, build_harness, new_nonce, parse_witness, screen_poc, strip_witness,
+)
 
 MARKER = "SENTINEL_PWNED"
+
+# How much of a failed run's output is fed back to the model. The tail is kept:
+# that is where the traceback is.
+_FEEDBACK_CHARS = 6000
 
 # `ModuleNotFoundError: No module named 'flask'` and friends.
 _MISSING_MODULE_RE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
@@ -111,7 +118,9 @@ MOUNT = "/work"
 SYSTEM_PROMPT = (
     "You are an exploit developer writing a minimal proof-of-concept to demonstrate "
     "a specific vulnerability in a specific file. You output ONLY a runnable Python "
-    "script -- no prose, no markdown."
+    "script -- no prose, no markdown. The exploit must drive the target's own code; "
+    "it must never inspect or modify the execution tracer that watches it. "
+    + UNTRUSTED_NOTICE
 )
 
 POC_PROMPT = """A security scan reported this potential vulnerability:
@@ -122,9 +131,7 @@ POC_PROMPT = """A security scan reported this potential vulnerability:
 
 The file under test is importable as the module `{module}` (its import root is
 on sys.path, so relative imports inside its package work). Here is its source:
---- BEGIN {file} ---
-{code}
---- END {file} ---
+{code_block}
 
 Write a SHORT Python 3 script that proves THIS SPECIFIC vulnerability by actually
 exercising the reported code.
@@ -148,14 +155,10 @@ FIX_PROMPT = """Your previous proof-of-concept did NOT print the marker {marker}
 Here is the script and what happened when it ran.
 
 Previous PoC:
---- BEGIN POC ---
-{poc}
---- END POC ---
+{poc_block}
 
 Output when it ran:
---- BEGIN OUTPUT ---
-{output}
---- END OUTPUT ---
+{output_block}
 
 Fix the script so it correctly demonstrates the {vuln_class} vulnerability at
 {file}:{line} and prints {marker} on success. Remember to IMPORT and drive the
@@ -204,17 +207,33 @@ class Validator:
         witness: WitnessResult | None = None
 
         for attempt in range(1, self.max_attempts + 1):
+            refused = screen_poc(poc)
+            if refused:
+                # Never run a PoC that reaches for the tracer: its marker would
+                # prove nothing, and its trace could not be trusted.
+                witness = None
+                clean_output = ("[sentinel] PoC refused before execution: it "
+                                + "; ".join(refused)
+                                + ". Drive the target's own code instead.")
+                if attempt < self.max_attempts:
+                    poc = self._fix_poc(finding, code, poc, clean_output, module)
+                continue
+
+            # A fresh nonce per run: only the harness knows it, so only the
+            # harness's record is believed.
+            nonce = new_nonce()
             harness = build_harness(
                 poc_code=poc,
                 target_file=finding.file,
                 target_line=finding.line,
+                nonce=nonce,
                 mount=MOUNT,
                 workdir="/tmp",
                 import_root=import_root,
             )
             result = self.sandbox.run(self._as_command(harness), workdir=self.target)
             raw = result.stdout + result.stderr
-            witness = parse_witness(result.stdout, finding.file, finding.line)
+            witness = parse_witness(result.stdout, finding.file, finding.line, nonce=nonce)
             clean_output = strip_witness(raw)
 
             if MARKER in result.stdout:
@@ -269,7 +288,7 @@ class Validator:
             file=finding.file,
             line=finding.line,
             description=finding.description,
-            code=code,
+            code_block=fence(finding.file, code),
             module=module,
             marker=MARKER,
         )
@@ -281,8 +300,8 @@ class Validator:
         prompt = FIX_PROMPT.format(
             module=module,
             marker=MARKER,
-            poc=poc,
-            output=output,
+            poc_block=fence("previous PoC", poc),
+            output_block=fence("sandbox output", output[-_FEEDBACK_CHARS:]),
             vuln_class=finding.vuln_class,
             file=finding.file,
             line=finding.line,

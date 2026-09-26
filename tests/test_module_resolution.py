@@ -109,11 +109,11 @@ def test_exploit_through_a_relative_import_is_line_proven(src_layout):
     root, module = resolve_import(src_layout, "src/shop/db.py")
     poc = f"from {module} import login\nif login(\"' OR '1'='1\"):\n    print('SENTINEL_PWNED')\n"
     harness = build_harness(poc, "src/shop/db.py", SINK_LINE, mount=str(src_layout),
-                            workdir=str(src_layout), import_root=root)
+                            workdir=str(src_layout), import_root=root, nonce="n")
 
     proc = subprocess.run([sys.executable, "-c", harness], capture_output=True,
                           text=True, timeout=60)
-    w = parse_witness(proc.stdout, "src/shop/db.py", SINK_LINE)
+    w = parse_witness(proc.stdout, "src/shop/db.py", SINK_LINE, nonce="n")
 
     assert "SENTINEL_PWNED" in proc.stdout, proc.stderr
     assert w.line_executed

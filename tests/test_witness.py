@@ -13,6 +13,7 @@ The integration tests need no Docker and no API key: they run the same harness
 source the sandbox would run, using the local interpreter.
 """
 
+import json
 import subprocess
 import sys
 import textwrap
@@ -26,6 +27,9 @@ from sentinel.witness import (
     WitnessResult,
     WITNESS_PREFIX,
 )
+
+# The harness only vouches for a record that carries the caller's nonce.
+NONCE = "test-nonce"
 
 TARGET_SOURCE = textwrap.dedent('''
     import sqlite3
@@ -54,12 +58,12 @@ def target_dir(tmp_path):
 def _run_harness(poc, target_dir, line=SINK_LINE, file="app.py"):
     harness = build_harness(
         poc_code=poc, target_file=file, target_line=line,
-        mount=str(target_dir), workdir=str(target_dir),
+        mount=str(target_dir), workdir=str(target_dir), nonce=NONCE,
     )
     proc = subprocess.run(
         [sys.executable, "-c", harness], capture_output=True, text=True, timeout=60
     )
-    return proc, parse_witness(proc.stdout, file, line)
+    return proc, parse_witness(proc.stdout, file, line, nonce=NONCE)
 
 
 # --- integration: the distinction the whole project rests on ---------------
@@ -141,23 +145,53 @@ def test_harness_does_not_suppress_poc_stdout(target_dir):
 
 def test_missing_record_is_unavailable_not_disproof():
     """No trace must never be readable as evidence AGAINST the finding."""
-    w = parse_witness("just some exploit output\n", "app.py", 10)
+    w = parse_witness("just some exploit output\n", "app.py", 10, nonce=NONCE)
     assert not w.available
     assert not w.line_executed
     assert "No execution trace" in w.explain()
 
 
 def test_malformed_record_is_handled():
-    w = parse_witness(WITNESS_PREFIX + "{not json}\n", "app.py", 10)
+    w = parse_witness(WITNESS_PREFIX + "{not json}\n", "app.py", 10, nonce=NONCE)
     assert not w.available
 
 
-def test_last_record_wins_if_poc_prints_a_decoy():
-    """A PoC could print a fake record; the harness's own trailing one must win."""
-    fake = WITNESS_PREFIX + '{"available": true, "line_executed": true, "executed_lines": [1]}'
-    real = WITNESS_PREFIX + '{"available": true, "line_executed": false, "executed_lines": []}'
-    w = parse_witness(fake + "\n" + real + "\n", "app.py", 10)
-    assert not w.line_executed
+def _record(line_executed, nonce=NONCE):
+    body = {"available": True, "line_executed": line_executed, "executed_lines": [10]}
+    if nonce is not None:
+        body["nonce"] = nonce
+    return WITNESS_PREFIX + json.dumps(body)
+
+
+def test_a_decoy_record_without_the_nonce_is_ignored():
+    """A PoC can print a record-shaped line; only the one carrying the nonce counts.
+
+    The old parser kept the LAST record, which a PoC could arrange to be its own by
+    exiting before the harness wrote. Order must no longer matter.
+    """
+    fake, real = _record(True, nonce=None), _record(False)
+    for output in (fake + "\n" + real, real + "\n" + fake):
+        w = parse_witness(output + "\n", "app.py", 10, nonce=NONCE)
+        assert w.available and not w.line_executed
+        assert "without this run's nonce" in w.error
+
+
+def test_a_wrong_nonce_is_a_decoy():
+    w = parse_witness(_record(True, nonce="guessed") + "\n", "app.py", 10, nonce=NONCE)
+    assert not w.available and not w.line_executed
+
+
+def test_two_authentic_records_void_the_trace():
+    """Only one harness runs; a second record with the nonce means it leaked."""
+    output = _record(True) + "\n" + _record(True) + "\n"
+    w = parse_witness(output, "app.py", 10, nonce=NONCE)
+    assert not w.available and not w.line_executed
+    assert "cannot be trusted" in w.error
+
+
+def test_build_harness_refuses_to_run_without_a_nonce():
+    with pytest.raises(ValueError):
+        build_harness("import app", "app.py", 1, nonce="")
 
 
 def test_strip_witness_removes_records_from_displayed_output():
@@ -175,7 +209,6 @@ def test_nearest_line_reports_the_closest_executed_line():
 
 
 def test_witness_is_json_serializable():
-    import json
     w = WitnessResult(available=True, file_executed=True, line_executed=True,
                       executed_lines=[1, 2], target_file="a.py", target_line=2)
     json.dumps(w.to_dict())
@@ -200,10 +233,9 @@ def test_bare_import_is_never_a_line_proof(target_dir):
 
 def test_import_time_lines_are_recorded_for_transparency(target_dir):
     """The ignored lines are reported, so the grading is auditable."""
-    import json
     harness = build_harness(
         poc_code="import app\n", target_file="app.py", target_line=SINK_LINE,
-        mount=str(target_dir), workdir=str(target_dir),
+        mount=str(target_dir), workdir=str(target_dir), nonce=NONCE,
     )
     proc = subprocess.run(
         [sys.executable, "-c", harness], capture_output=True, text=True, timeout=60
@@ -248,12 +280,12 @@ def test_same_named_dependency_file_cannot_forge_a_proof(tmp_path):
     )
     harness = build_harness(
         poc_code=poc, target_file="app.py", target_line=2,
-        mount=str(target_dir), workdir=str(target_dir),
+        mount=str(target_dir), workdir=str(target_dir), nonce=NONCE,
     )
     proc = subprocess.run(
         [sys.executable, "-c", harness], capture_output=True, text=True, timeout=60
     )
-    w = parse_witness(proc.stdout, "app.py", 2)
+    w = parse_witness(proc.stdout, "app.py", 2, nonce=NONCE)
 
     assert "SENTINEL_PWNED" in proc.stdout   # the shallow signal is satisfied
     assert w.available

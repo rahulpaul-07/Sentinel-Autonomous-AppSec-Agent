@@ -51,12 +51,34 @@ Honest limits
   evidence, and it is reported as such rather than papered over.
 * A small line window absorbs the off-by-a-line drift that models routinely
   produce when reporting a multi-line statement.
+
+Integrity
+---------
+The PoC is untrusted code, written by a model that has read the target's source --
+and that source can carry instructions. Three layers keep a PoC from grading itself:
+
+* A per-run nonce. The harness's record carries a secret generated after the PoC
+  was written; a record without it is ignored, and two records with it void the
+  trace. This stops a PoC that prints a record and exits before the harness can.
+* No reachable state. The tracer's hit sets live in function locals, not in the
+  `__main__` module a PoC can import, and the record goes out through a file
+  descriptor duplicated before the PoC starts, not through `sys.stdout`.
+* A screen. `screen_poc` refuses, before execution, a PoC that touches the
+  handles tampering would need: frame introspection, trace hooks, `os._exit`,
+  `__main__`, `ctypes`, heap walking.
+
+These defeat accidental and naively injected forgery. They do not make an
+in-process tracer tamper-proof against a PoC engineered to evade the screen --
+tracing from outside the interpreter would, and is on the roadmap.
 """
 
 from __future__ import annotations
 
+import ast
+import hmac
 import json
 import re
+import secrets
 from dataclasses import dataclass, field
 
 # Emitted by the harness, parsed back out of sandbox stdout.
@@ -136,120 +158,148 @@ class WitnessResult:
         }
 
 
+def new_nonce() -> str:
+    """A fresh per-run secret that authenticates the harness's own record.
+
+    The PoC is written by a model before the nonce exists, so a record the PoC
+    prints from a template can never carry it. Tests replace this to get a
+    predictable value.
+    """
+    return secrets.token_hex(16)
+
+
+# All harness state lives in the locals of one function rather than in module
+# globals. The PoC runs in the same interpreter, and `import __main__` used to hand
+# it the hit sets directly: `__main__._runtime_hits.add(N)` graded a PoC that never
+# touched the target as LINE_PROVEN. Reaching a function's locals takes frame
+# introspection, which `screen_poc` refuses before the PoC ever runs.
+#
+# The record is written with os.write to a descriptor duplicated before the PoC
+# starts. Writing through sys.stdout would pass the record, nonce included, through
+# any object the PoC had put there -- one that could rewrite it on the way out.
 HARNESS_TEMPLATE = '''\
-import sys, os, json, ast, traceback
+import sys, os, json, ast, traceback, threading
 
-_TARGET_BASENAME = {target_basename!r}
-_TARGET_PATH = {target_path!r}
-_TARGET_LINE = {target_line!r}
-_WITNESS_PREFIX = {prefix!r}
-_hits = set()
-_err = ""
+def _sentinel_witness():
+    target_basename = {target_basename!r}
+    target_path = {target_path!r}
+    target_line = {target_line!r}
+    prefix = {prefix!r}
+    nonce = {nonce!r}
+    record_fd = os.dup(1)
+    hits = set()
+    runtime_hits = set()
+    err = ""
 
-# Resolve the target to an absolute real path and match traced frames against THAT.
-# Matching on basename alone is unsafe: dependencies ship files with the same
-# common names (flask/app.py, for one), so importing a library would attribute
-# hundreds of its lines to the file under test and manufacture a proof.
-try:
-    _TARGET_REAL = os.path.realpath(_TARGET_PATH)
-except Exception:
-    _TARGET_REAL = _TARGET_PATH
-_HAVE_REAL = os.path.isfile(_TARGET_REAL)
+    # Resolve the target to an absolute real path and match traced frames against
+    # THAT. Matching on basename alone is unsafe: dependencies ship files with the
+    # same common names (flask/app.py, for one), so importing a library would
+    # attribute hundreds of its lines to the file under test and manufacture a proof.
+    try:
+        target_real = os.path.realpath(target_path)
+    except Exception:
+        target_real = target_path
+    have_real = os.path.isfile(target_real)
+    cache = dict()
 
-_target_cache = dict()
+    def is_target(filename):
+        if filename in cache:
+            return cache[filename]
+        result = False
+        if filename:
+            if have_real:
+                try:
+                    result = os.path.realpath(filename) == target_real
+                except Exception:
+                    result = False
+            # Only if the target path could not be resolved do we fall back to
+            # basename, and then still refuse files inside an installed package.
+            elif os.path.basename(filename) == target_basename:
+                result = ("site-packages" not in filename
+                          and "dist-packages" not in filename)
+        cache[filename] = result
+        return result
 
-def _is_target(filename):
-    if filename in _target_cache:
-        return _target_cache[filename]
-    _target_cache[filename] = result = _is_target_uncached(filename)
-    return result
+    # Lines that execute merely because a module is imported -- `def`/`class`
+    # headers and their decorators. Counting these would let a PoC that does
+    # nothing but `import target` appear to have reached a nearby sink.
+    import_time_lines = set()
+    try:
+        with open(target_real, "r", encoding="utf-8", errors="replace") as fh:
+            tree = ast.parse(fh.read())
+        for n in ast.walk(tree):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                import_time_lines.add(n.lineno)
+                for d in n.decorator_list:
+                    import_time_lines.add(d.lineno)
+    except Exception:
+        pass
 
-def _is_target_uncached(filename):
-    if not filename:
+    # A line that runs while the target module is being imported is not the
+    # exploit doing anything: importing executes every top-level statement, and
+    # any function a top-level statement calls. We tell the two apart by looking
+    # up the call stack for the target's own module-level frame.
+    def during_target_import(frame):
+        f = frame
+        while f is not None:
+            if f.f_code.co_name == "<module>" and is_target(f.f_code.co_filename):
+                return True
+            f = f.f_back
         return False
-    if _HAVE_REAL:
+
+    def tracer(frame, event, arg):
+        if event == "line" and is_target(frame.f_code.co_filename):
+            hits.add(frame.f_lineno)
+            if not during_target_import(frame):
+                runtime_hits.add(frame.f_lineno)
+        return tracer
+
+    poc = {poc!r}
+
+    sys.path.insert(0, {import_path!r})
+    os.chdir({workdir!r})
+
+    # Threads the PoC starts are traced too, so an exploit that drives the target
+    # from a worker thread is not under-counted.
+    threading.settrace(tracer)
+    sys.settrace(tracer)
+    try:
+        exec(compile(poc, "<sentinel-poc>", "exec"), {{"__name__": "__main__"}})
+    except SystemExit:
+        pass
+    except BaseException:
+        err = traceback.format_exc()[-1500:]
+    finally:
+        sys.settrace(None)
+        threading.settrace(None)
+
+    if err:
+        sys.stderr.write(err + "\\n")
+    for stream in (sys.stdout, sys.__stdout__):
         try:
-            return os.path.realpath(filename) == _TARGET_REAL
+            stream.flush()
         except Exception:
-            return False
-    # Only if the target path could not be resolved do we fall back to basename,
-    # and then we still require it not to live inside an installed package.
-    if os.path.basename(filename) != _TARGET_BASENAME:
-        return False
-    return "site-packages" not in filename and "dist-packages" not in filename
+            pass
 
-# Lines that execute merely because a module is imported -- `def`/`class` headers
-# and their decorators. Counting these as a witness would let a PoC that does
-# nothing but `import target` appear to have reached a nearby sink.
-_import_time_lines = set()
-try:
-    with open(_TARGET_REAL, "r", encoding="utf-8", errors="replace") as _fh:
-        _tree = ast.parse(_fh.read())
-    for _n in ast.walk(_tree):
-        if isinstance(_n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            _import_time_lines.add(_n.lineno)
-            for _d in _n.decorator_list:
-                _import_time_lines.add(_d.lineno)
-except Exception:
-    pass
+    lines = sorted(hits)
+    # A line is a witness only if the exploit drove it after the import. A line
+    # that ran BOTH during the import and later by the exploit still counts: the
+    # later run is real, so we test membership in the runtime set.
+    witness_lines = [n for n in sorted(runtime_hits) if n not in import_time_lines]
+    record = {{
+        "nonce": nonce,
+        "available": True,
+        "file_executed": bool(lines),
+        "line_executed": any(abs(n - target_line) <= {window} for n in witness_lines),
+        "executed_lines": lines[:200],
+        "import_only_lines": sorted(hits - runtime_hits)[:200],
+        "import_time_lines_ignored": sorted(import_time_lines)[:200],
+        "resolved_target": target_real if have_real else "",
+        "error": err[-400:],
+    }}
+    os.write(record_fd, ("\\n" + prefix + json.dumps(record) + "\\n").encode("utf-8"))
 
-# A line that runs while the target module is being imported is not the exploit
-# doing anything: importing executes every top-level statement, and any function
-# a top-level statement calls. We tell the two apart by looking up the call stack
-# for the target's own module-level frame.
-_runtime_hits = set()
-
-def _during_target_import(frame):
-    f = frame
-    while f is not None:
-        if f.f_code.co_name == "<module>" and _is_target(f.f_code.co_filename):
-            return True
-        f = f.f_back
-    return False
-
-def _tracer(frame, event, arg):
-    if event == "line":
-        if _is_target(frame.f_code.co_filename):
-            _hits.add(frame.f_lineno)
-            if not _during_target_import(frame):
-                _runtime_hits.add(frame.f_lineno)
-    return _tracer
-
-_POC = {poc!r}
-
-sys.path.insert(0, {import_path!r})
-os.chdir({workdir!r})
-
-sys.settrace(_tracer)
-try:
-    exec(compile(_POC, "<sentinel-poc>", "exec"), {{"__name__": "__main__"}})
-except SystemExit:
-    pass
-except BaseException:
-    _err = traceback.format_exc()[-1500:]
-finally:
-    sys.settrace(None)
-
-if _err:
-    sys.stderr.write(_err + "\\n")
-
-_lines = sorted(_hits)
-# A line is a witness only if the exploit drove it after the import. A line that
-# ran BOTH during the import and later by the exploit still counts: the later run
-# is real, so we test membership in the runtime set, not absence from the import set.
-_witness_lines = [n for n in sorted(_runtime_hits) if n not in _import_time_lines]
-_record = {{
-    "available": True,
-    "file_executed": bool(_lines),
-    "line_executed": any(abs(n - _TARGET_LINE) <= {window} for n in _witness_lines),
-    "executed_lines": _lines[:200],
-    "import_only_lines": sorted(_hits - _runtime_hits)[:200],
-    "import_time_lines_ignored": sorted(_import_time_lines)[:200],
-    "resolved_target": _TARGET_REAL if _HAVE_REAL else "",
-    "error": _err[-400:],
-}}
-sys.stdout.write("\\n" + _WITNESS_PREFIX + json.dumps(_record) + "\\n")
-sys.stdout.flush()
+_sentinel_witness()
 '''
 
 
@@ -257,6 +307,8 @@ def build_harness(
     poc_code: str,
     target_file: str,
     target_line: int,
+    *,
+    nonce: str,
     mount: str = "/target",
     workdir: str = "/tmp",
     import_root: str = "",
@@ -265,16 +317,23 @@ def build_harness(
 
     The harness puts the target's import root -- the mount itself for a flat
     layout, `<mount>/src` for a src layout -- on `sys.path` so the PoC can import
-    the module under test the way the project would, runs the PoC with a line tracer installed, and prints a
-    JSON witness record. It never fails the run: a PoC that raises still produces
-    a record, because "it crashed" is itself evidence.
+    the module under test the way the project would, runs the PoC with a line
+    tracer installed, and prints a JSON witness record carrying `nonce`. It never
+    fails the run: a PoC that raises still produces a record, because "it crashed"
+    is itself evidence.
+
+    `nonce` is required: a record is only believed if it carries the value the
+    caller generated for this run (see `parse_witness`).
     """
+    if not nonce:
+        raise ValueError("build_harness needs a nonce; use new_nonce()")
     basename = target_file.replace("\\", "/").split("/")[-1]
     return HARNESS_TEMPLATE.format(
         target_basename=basename,
         target_path=f"{mount.rstrip('/')}/{target_file.replace(chr(92), '/')}",
         target_line=int(target_line or 0),
         prefix=WITNESS_PREFIX,
+        nonce=nonce,
         poc=poc_code,
         import_path=_join(mount, import_root),
         workdir=workdir,
@@ -287,30 +346,50 @@ def _join(mount: str, rel: str) -> str:
     return f"{mount.rstrip('/')}/{rel}" if rel else mount
 
 
-def parse_witness(output: str, target_file: str = "", target_line: int = 0) -> WitnessResult:
-    """Recover the witness record from sandbox output.
+def parse_witness(
+    output: str, target_file: str = "", target_line: int = 0, *, nonce: str
+) -> WitnessResult:
+    """Recover the harness's own witness record from sandbox output.
 
-    Absence of a record is not a failure of the finding -- it means the trace is
-    unavailable, and the caller must not treat that as disproof.
+    Only a record carrying this run's nonce is believed, and exactly one must be
+    present. Anything the PoC printed that merely looks like a record is ignored,
+    and reported in `error` so the attempt is visible in the report.
+
+    Absence of an authentic record is not a failure of the finding -- it means the
+    trace is unavailable, and the caller must not treat that as disproof. It also
+    must not be treated as proof: an unavailable witness grades CLASS_ONLY at best.
     """
-    match = None
+    authentic: list[dict] = []
+    ignored = 0
+    malformed = ""
     for match in _WITNESS_RE.finditer(output or ""):
-        pass  # keep the last record if the PoC somehow printed several
-    if match is None:
-        return WitnessResult(
-            available=False, target_file=target_file, target_line=target_line
-        )
+        try:
+            data = json.loads(match.group(1))
+        except (ValueError, TypeError) as exc:
+            malformed = f"malformed witness record: {exc}"
+            continue
+        if isinstance(data, dict) and hmac.compare_digest(str(data.get("nonce", "")), nonce):
+            authentic.append(data)
+        else:
+            ignored += 1
 
-    try:
-        data = json.loads(match.group(1))
-    except (ValueError, TypeError) as exc:
-        return WitnessResult(
-            available=False,
-            target_file=target_file,
-            target_line=target_line,
-            error=f"malformed witness record: {exc}",
-        )
+    notes = []
+    if ignored:
+        notes.append(f"ignored {ignored} record(s) without this run's nonce "
+                     "(printed by the PoC, not the harness)")
 
+    def unavailable(reason: str) -> WitnessResult:
+        return WitnessResult(available=False, target_file=target_file,
+                             target_line=target_line,
+                             error="; ".join([reason, *notes]) if reason else "; ".join(notes))
+
+    if len(authentic) > 1:
+        return unavailable(f"{len(authentic)} records carried this run's nonce; "
+                           "the trace cannot be trusted")
+    if not authentic:
+        return unavailable(malformed)
+
+    data = authentic[0]
     return WitnessResult(
         available=bool(data.get("available", True)),
         file_executed=bool(data.get("file_executed", False)),
@@ -321,10 +400,103 @@ def parse_witness(output: str, target_file: str = "", target_line: int = 0) -> W
         ],
         target_file=target_file,
         target_line=target_line,
-        error=str(data.get("error", "")),
+        error="; ".join([str(data.get("error", "")), *notes]).strip("; "),
     )
 
 
 def strip_witness(output: str) -> str:
     """Remove witness records so report output shows only the exploit's own text."""
     return _WITNESS_RE.sub("", output or "").strip()
+
+
+# --- PoC screen ---------------------------------------------------------------
+#
+# The PoC and the tracer share one interpreter, so a PoC can in principle reach
+# the tracer's state. A model does not do that by accident; it does it when told
+# to, and the instructions can arrive inside the target's own source, which is
+# pasted into the prompt. These are the handles such a PoC would need. None of
+# them has any use in exploiting an application bug, so a PoC that uses one is
+# refused before it runs and the model is asked for another.
+
+_TAMPER_ATTRS = {
+    "settrace": "replaces the execution tracer",
+    "setprofile": "installs a competing interpreter hook",
+    "gettrace": "reads the execution tracer",
+    "_getframe": "inspects interpreter frames",
+    "currentframe": "inspects interpreter frames",
+    "f_back": "walks interpreter frames",
+    "f_locals": "reads another frame's variables",
+    "f_globals": "reads another frame's globals",
+    "get_referrers": "searches the heap for tracer state",
+    "get_referents": "searches the heap for tracer state",
+    "get_objects": "searches the heap for tracer state",
+    "monitoring": "installs a competing interpreter hook",
+    "_exit": "exits before the tracer can report",
+    "dup2": "redirects the tracer's output descriptor",
+    "addaudithook": "installs an interpreter hook",
+}
+_TAMPER_MODULES = {
+    "__main__": "reaches into the harness module",
+    "ctypes": "can rewrite interpreter memory",
+    "inspect": "inspects interpreter frames",
+}
+
+
+def screen_poc(poc_code: str) -> list[str]:
+    """Reasons this PoC may not run under the tracer. Empty means it may.
+
+    A PoC that does not parse is let through: it fails on its own, and the
+    failure output drives the self-correction loop like any other.
+    """
+    try:
+        tree = ast.parse(poc_code)
+    except (SyntaxError, ValueError):
+        return []
+
+    reasons: list[str] = []
+
+    def flag(text: str) -> None:
+        if text not in reasons:
+            reasons.append(text)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in _TAMPER_ATTRS:
+            flag(f"`.{node.attr}` {_TAMPER_ATTRS[node.attr]}")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root in _TAMPER_MODULES:
+                    flag(f"`import {alias.name}` {_TAMPER_MODULES[root]}")
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".")[0]
+            if root in _TAMPER_MODULES:
+                flag(f"`from {node.module} import ...` {_TAMPER_MODULES[root]}")
+            for alias in node.names:
+                if alias.name in _TAMPER_ATTRS:
+                    flag(f"`{alias.name}` {_TAMPER_ATTRS[alias.name]}")
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if WITNESS_PREFIX.rstrip(":") in node.value:
+                flag("prints text shaped like the tracer's own record")
+            elif node.value in _TAMPER_MODULES or node.value in _TAMPER_ATTRS:
+                flag(f"names `{node.value}` as a string, a way around this screen")
+        elif isinstance(node, ast.Call) and _is_named_compile(node):
+            # compile(src, "/work/app.py", ...) makes code the PoC wrote look like
+            # it came from the target file, so its lines would be traced as hits.
+            filename = node.args[1] if len(node.args) > 1 else next(
+                (k.value for k in node.keywords if k.arg == "filename"), None)
+            if filename is not None and not (
+                isinstance(filename, ast.Constant)
+                and isinstance(filename.value, str)
+                and filename.value.startswith("<")
+            ):
+                flag("`compile()` with a real file name can pass the PoC's own code "
+                     "off as the target's")
+    return reasons
+
+
+def _is_named_compile(call: ast.Call) -> bool:
+    func = call.func
+    return (isinstance(func, ast.Name) and func.id == "compile") or (
+        isinstance(func, ast.Attribute) and func.attr == "compile"
+        and isinstance(func.value, ast.Name) and func.value.id == "builtins"
+    )

@@ -13,6 +13,8 @@ CLASS_ONLY, which is exactly the distinction the project exists to make.
 
 import json
 
+import pytest
+
 from sentinel.evidence import Evidence
 from sentinel.llm import LLMResponse
 from sentinel.sandbox import SandboxResult
@@ -24,6 +26,15 @@ FINDINGS_JSON = (
     '{"findings": [{"vuln_class": "SQL Injection", "line": 33, "severity": "critical",'
     ' "description": "user input concatenated into SQL", "confidence": 0.95}]}'
 )
+
+# The stubbed sandbox has to speak for the harness, so it needs the nonce the
+# validator generated. Pinning the generator stands in for the harness knowing it.
+NONCE = "pipeline-nonce"
+
+
+@pytest.fixture(autouse=True)
+def _fixed_nonce(monkeypatch):
+    monkeypatch.setattr("sentinel.validator.new_nonce", lambda: NONCE)
 
 
 class StubLLM:
@@ -50,6 +61,7 @@ def _sandbox(stdout):
 
 def _witness(line_executed, lines):
     record = {
+        "nonce": NONCE,
         "available": True,
         "file_executed": bool(lines),
         "line_executed": line_executed,

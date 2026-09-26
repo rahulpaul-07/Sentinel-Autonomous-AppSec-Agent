@@ -74,7 +74,7 @@ def test_harness_imports_from_the_mount_point():
     """The harness's sys.path entry must match where the sandbox mounts the code."""
     from sentinel.witness import build_harness
 
-    harness = build_harness("import app", "app.py", 33, mount=MOUNT, workdir="/tmp")
+    harness = build_harness("import app", "app.py", 33, mount=MOUNT, workdir="/tmp", nonce="n")
     assert f"sys.path.insert(0, {MOUNT!r})" in harness
     # The PoC must run somewhere writable: /work is mounted read-only, so a PoC
     # that creates a scratch database would fail if it ran there.
