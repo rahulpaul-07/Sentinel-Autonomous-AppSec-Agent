@@ -1,23 +1,83 @@
+/* Self-hosted type: no request leaves the page for a font. */
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+@import "@fontsource/ibm-plex-mono/latin-600.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Light is a case file: paper, ink, hairlines. Colour is reserved for evidence. */
 :root {
-  color-scheme: dark;
-  padding-top: env(safe-area-inset-top, 0px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  color-scheme: light;
+  --paper: 246 244 239;
+  --panel: 238 235 228;
+  --rule: 214 209 199;
+  --ink: 20 22 26;
+  --body: 58 61 68;
+  --muted: 110 112 118;
+  --proof: 14 122 72;
+  --warn: 158 92 0;
+  --sev: 180 35 24;
 }
 
-html { scroll-behavior: smooth; scroll-padding-top: 5rem; -webkit-text-size-adjust: 100%; }
-body { @apply bg-base text-ink font-sans antialiased; margin: 0; overflow-x: hidden; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: 14 15 17;
+    --panel: 23 25 28;
+    --rule: 44 46 51;
+    --ink: 236 235 231;
+    --body: 196 195 190;
+    --muted: 141 140 135;
+    --proof: 79 201 138;
+    --warn: 224 160 69;
+    --sev: 240 118 107;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: 14 15 17;
+  --panel: 23 25 28;
+  --rule: 44 46 51;
+  --ink: 236 235 231;
+  --body: 196 195 190;
+  --muted: 141 140 135;
+  --proof: 79 201 138;
+  --warn: 224 160 69;
+  --sev: 240 118 107;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 4.5rem;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  @apply bg-paper font-sans text-body antialiased;
+  margin: 0;
+  overflow-x: hidden;
+  font-feature-settings: "ss02";
+}
+
+::selection { background: rgb(var(--proof) / .22); }
+
+:focus-visible {
+  outline: 2px solid rgb(var(--ink));
+  outline-offset: 3px;
+}
+
+a { text-underline-offset: 3px; }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after {
     animation-duration: .001ms !important;
-    animation-iteration-count: 1 !important;
     transition-duration: .001ms !important;
   }
 }
-
-:focus-visible { outline: 2px solid #7c5cff; outline-offset: 3px; border-radius: 4px; }

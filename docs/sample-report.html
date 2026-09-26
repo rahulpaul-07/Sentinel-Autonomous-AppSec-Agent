@@ -2,6 +2,8 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Sentinel sample report</title>
 <style>
@@ -107,6 +109,10 @@ html,body { margin:0; padding:0; background:var(--bg); color:var(--text);
 .conf { color:var(--micro); font-size:12px; }
 .desc { color:var(--text); margin:6px 0 12px; }
 
+.fix { font-size:11px; font-weight:700; margin-left:8px; padding:2px 8px; border-radius:5px; }
+.fixok { color:var(--ok); background:color-mix(in srgb,var(--ok) 14%,transparent); }
+.fixbad { color:var(--bad); background:color-mix(in srgb,var(--bad) 14%,transparent); }
+.fixmeh { color:var(--muted); background:var(--panel2); }
 .drawer { border-top:1px solid var(--line); padding-top:10px; margin-top:6px; }
 .drawer summary { cursor:pointer; color:var(--muted); font-size:13.5px;
   font-weight:600; list-style:none; user-select:none; }
@@ -140,7 +146,7 @@ footer a { color:var(--muted); text-decoration:none; border-bottom:1px dotted va
       <span>Target <b class="mono">targets/vulnerable_app</b></span>
       <span>Model <b class="mono">illustrative fixture (no model call, not a scan result)</b></span>
       <span>Runtime <b>12.34s</b></span>
-      <span>Generated <b>2026-09-24 09:03 UTC</b></span>
+      <span>Generated <b>2026-09-26 15:17 UTC</b></span>
     </div>
   </header>
 
@@ -182,7 +188,7 @@ print(&#x27;SENTINEL_PWNED&#x27;)
         </details>
         
         <details class="drawer">
-          <summary>Proposed secure-fix diff</summary>
+          <summary>Proposed secure-fix diff <span class="fix fixmeh" title="">not verified</span></summary>
           <pre class="code diff"><span class="dl meta">--- a/app.py</span>
 <span class="dl meta">+++ b/app.py</span>
 <span class="dl meta">@@ -33 +33 @@</span>

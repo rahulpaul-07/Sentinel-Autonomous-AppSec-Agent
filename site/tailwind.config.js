@@ -1,49 +1,30 @@
 /** @type {import('tailwindcss').Config} */
+
+// Every color is a CSS variable (an RGB triplet) defined per theme in index.css,
+// so one class works in light and dark and opacity modifiers still apply.
+const token = (name) => `rgb(var(--${name}) / <alpha-value>)`;
+
 export default {
-  darkMode: "class",
+  darkMode: ["selector", '[data-theme="dark"]'],
   content: ["./index.html", "./src/**/*.{js,jsx}"],
   theme: {
     extend: {
       colors: {
-        // Inherited from the tool's own HTML report so the site and the artifact
-        // it advertises read as one product.
-        base:    "#0a0c11",
-        surface: "#12161f",
-        raised:  "#171d29",
-        line:    "#232a38",
-        ink:     "#f2f5fb",
-        muted:   "#8a93a6",
-        faint:   "#5f6b80",
-        violet:  "#7c5cff",
-        violets: "#a892ff",
-        proof:   "#2fd47a",
-        warn:    "#ff9f43",
-        sev:     "#ff5c6c",
+        paper: token("paper"),     // page
+        panel: token("panel"),     // inset surfaces: code, tables, the lab
+        rule: token("rule"),       // hairlines
+        ink: token("ink"),         // headings, key figures
+        body: token("body"),       // running text
+        muted: token("muted"),     // captions, labels
+        proof: token("proof"),     // LINE PROVEN -- the only green on the page
+        warn: token("warn"),       // CLASS ONLY
+        sev: token("sev"),         // failures, severity
       },
       fontFamily: {
-        display: ['"Space Grotesk"', "system-ui", "sans-serif"],
-        sans: ["Inter", "system-ui", "sans-serif"],
-        mono: ['"JetBrains Mono"', "ui-monospace", "monospace"],
+        sans: ['"IBM Plex Sans"', "system-ui", "sans-serif"],
+        mono: ['"IBM Plex Mono"', "ui-monospace", "monospace"],
       },
-      animation: {
-        "border-beam": "border-beam calc(var(--duration)*1s) infinite linear",
-        marquee: "marquee var(--duration) linear infinite",
-        shine: "shine var(--duration) infinite linear",
-      },
-      keyframes: {
-        "border-beam": {
-          "100%": { "offset-distance": "100%" },
-        },
-        marquee: {
-          from: { transform: "translateX(0)" },
-          to: { transform: "translateX(calc(-100% - var(--gap)))" },
-        },
-        shine: {
-          "0%": { "background-position": "0% 0%" },
-          "50%": { "background-position": "100% 100%" },
-          to: { "background-position": "0% 0%" },
-        },
-      },
+      maxWidth: { page: "1120px" },
     },
   },
   plugins: [],

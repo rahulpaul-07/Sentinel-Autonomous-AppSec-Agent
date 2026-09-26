@@ -1,37 +1,57 @@
-import { useRef } from "react";
-import { motion } from "motion/react";
-import { ShieldCheck, Github, ArrowRight, Check, X, Minus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { ArrowUpRight, Github, Moon, Sun } from "lucide-react";
 
-import { Terminal, AnimatedSpan, TypingAnimation } from "@/components/ui/terminal";
-import { BorderBeam } from "@/components/ui/border-beam";
-import { NumberTicker } from "@/components/ui/number-ticker";
-import { DotPattern } from "@/components/ui/dot-pattern";
-import { AnimatedBeam } from "@/components/ui/animated-beam";
-import { Particles } from "@/components/ui/particles";
 import { ProofLab } from "@/components/proof-lab";
 import { cn } from "@/lib";
-import { REPO, RUNS, GATE, PIPELINE, TIERS, LIMITS } from "./data";
+import {
+  AUDIT, CI_SNIPPET, CONTROLS, CURRENT_RUNS, GATE, LIMITS, PIPELINE, REPO,
+  RESULTS_FILE, TIERS, V1_RUNS,
+} from "./data";
 
 /* ------------------------------------------------------------------ shell */
 
+function useTheme() {
+  const [theme, setTheme] = useState(null);   // null: follow the system
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("theme");
+      if (saved === "light" || saved === "dark") setTheme(saved);
+    } catch { /* storage blocked: follow the system */ }
+  }, []);
+  useEffect(() => {
+    if (theme) document.documentElement.dataset.theme = theme;
+  }, [theme]);
+  const toggle = () => {
+    const current = theme ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const next = current === "dark" ? "light" : "dark";
+    setTheme(next);
+    try { localStorage.setItem("theme", next); } catch { /* not persisted */ }
+  };
+  return toggle;
+}
+
+const NAV = [["problem", "Problem"], ["method", "Method"], ["hardening", "Hardening"],
+             ["results", "Results"], ["limits", "Limits"]];
+
 function Nav() {
+  const toggle = useTheme();
   return (
-    <nav className="sticky top-0 z-50 border-b border-line bg-base/80 backdrop-blur-xl">
-      <div className="mx-auto flex h-15 max-w-5xl items-center gap-6 px-5 py-3 sm:px-8">
-        <a href="#top" className="flex items-center gap-2 font-display text-[17px] font-semibold">
-          <ShieldCheck className="mr-1 h-5 w-5 text-violet" strokeWidth={2} />
-          Sentinel
+    <nav className="sticky top-0 z-40 border-b border-rule bg-paper/90 backdrop-blur">
+      <div className="mx-auto flex h-14 max-w-page items-center gap-6 px-4 sm:px-8">
+        <a href="#top" className="font-mono text-[14px] font-semibold tracking-[.14em] text-ink">
+          SENTINEL
         </a>
-        <div className="ml-auto flex items-center gap-6 text-sm">
-          <a className="hidden text-muted transition-colors hover:text-ink sm:ml-5 sm:inline" href="#problem">Problem</a>
-          <a className="hidden text-muted transition-colors hover:text-ink sm:ml-5 sm:inline" href="#how">How</a>
-          <a className="hidden text-muted transition-colors hover:text-ink sm:ml-5 sm:inline" href="#results">Results</a>
-          <a
-            href={REPO} target="_blank" rel="noopener"
-            className="relative overflow-hidden rounded-lg border border-line bg-surface px-3.5 py-1.5 transition-colors hover:border-violet"
-          >
-            GitHub
+        <div className="ml-auto flex items-center gap-5 text-[14px]">
+          {NAV.map(([id, label]) => (
+            <a key={id} href={`#${id}`} className="hidden text-body hover:text-ink md:inline">{label}</a>
+          ))}
+          <button onClick={toggle} aria-label="Toggle colour theme" className="p-1 text-body hover:text-ink">
+            <Sun className="hidden h-4 w-4 dark:block" aria-hidden />
+            <Moon className="h-4 w-4 dark:hidden" aria-hidden />
+          </button>
+          <a href={REPO} target="_blank" rel="noopener noreferrer"
+             className="inline-flex items-center gap-1.5 border border-ink px-3 py-1 text-ink hover:bg-ink hover:text-paper">
+            <Github className="h-3.5 w-3.5" aria-hidden /> Source
           </a>
         </div>
       </div>
@@ -39,108 +59,100 @@ function Nav() {
   );
 }
 
-function Section({ id, label, title, lede, children, className }) {
+function Section({ id, n, label, title, lede, children }) {
   return (
-    <section id={id} className={cn("border-t border-line py-16 sm:py-24", className)}>
-      <div className="mx-auto max-w-5xl px-5 sm:px-8">
-        {label && <p className="mb-3 font-mono text-[13px] text-violets">{label}</p>}
-        {title && (
-          <h2 className="max-w-[24ch] font-display text-[28px] font-semibold leading-[1.12] tracking-tight sm:text-[40px]">
-            {title}
-          </h2>
-        )}
-        {lede && <p className="mt-4 max-w-[62ch] text-[15px] leading-relaxed text-muted sm:text-base">{lede}</p>}
-        {children}
+    <section id={id} className="border-t border-rule">
+      <div className="mx-auto grid max-w-page gap-x-12 px-4 py-16 sm:px-8 sm:py-24 lg:grid-cols-[180px_minmax(0,1fr)]">
+        <p className="mb-4 font-mono text-[12px] uppercase tracking-[.14em] text-muted lg:sticky lg:top-24 lg:self-start">
+          <span className="text-ink">§{n}</span> {label}
+        </p>
+        <div className="min-w-0">
+          {title && (
+            <h2 className="max-w-[26ch] text-[28px] font-semibold leading-[1.15] tracking-[-0.015em] text-ink sm:text-[38px]">
+              {title}
+            </h2>
+          )}
+          {lede && <p className="mt-5 max-w-[64ch] text-[16px] leading-[1.65] text-body">{lede}</p>}
+          {children}
+        </div>
       </div>
     </section>
   );
 }
 
+function Table({ head, children, min = 560 }) {
+  return (
+    <div className="mt-8 overflow-x-auto border border-rule">
+      <table className="w-full text-left text-[14px]" style={{ minWidth: min }}>
+        <thead>
+          <tr className="border-b border-rule bg-panel font-mono text-[11.5px] uppercase tracking-[.08em] text-muted">
+            {head.map((h) => <th key={h} scope="col" className="px-4 py-2.5 font-medium">{h}</th>)}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-rule">{children}</tbody>
+      </table>
+    </div>
+  );
+}
+
+const toneText = { proof: "text-proof", warn: "text-warn", muted: "text-muted" };
+
 /* ------------------------------------------------------------------- hero */
+
+const RECORD = [
+  ["claim", "SQL Injection · app.py:33 · critical", ""],
+  ["gate", "request.args.get() → cursor.execute · reachable", ""],
+  ["exploit", "import app; drive get_user() with ' OR '1'='1", ""],
+  ["marker", "printed", "text-proof"],
+  ["trace", "app.py:33 executed after import · nonce ok", "text-proof"],
+  ["verdict", "LINE PROVEN", "font-semibold text-proof"],
+  ["fix", "parameterized query · replay: exploit fails", ""],
+];
 
 function Hero() {
   return (
-    <header className="relative overflow-hidden pb-14 pt-16 sm:pb-20 sm:pt-24">
-      <DotPattern className="[mask-image:radial-gradient(420px_circle_at_center,white,transparent)] opacity-60" cr={0.7} />
-      <Particles className="absolute inset-0 -z-10" quantity={70} ease={70} color="#7c5cff" />
-      <div className="relative mx-auto max-w-5xl px-5 sm:px-8">
-        <motion.span
-          initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
-          className="mb-6 inline-flex items-center gap-2.5 font-mono text-[13px] text-violets"
-        >
-          <span className="h-1.5 w-1.5 rounded-full bg-proof shadow-[0_0_0_4px_rgba(47,212,122,.14)]" />
-          Autonomous AppSec agent
-        </motion.span>
-
-        <motion.h1
-          initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.05 }}
-          className="max-w-[15ch] font-display text-[40px] font-semibold leading-[1.02] tracking-[-0.025em] sm:text-[66px]"
-        >
-          Any scanner can flag it.
-          <br />
-          This one <span className="text-proof">proves</span> it.
-        </motion.h1>
-
-        <motion.p
-          initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.12 }}
-          className="mt-6 max-w-[60ch] text-[16px] leading-relaxed text-muted sm:text-[19px]"
-        >
-          An LLM will happily invent a vulnerability, then write an exploit that
-          &ldquo;proves&rdquo; it without ever running your code. Sentinel executes the
-          exploit against the <span className="text-ink">exact line it accused</span> and
-          traces whether that line actually ran.
-        </motion.p>
-
-        <motion.div
-          initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.18 }}
-          className="mt-8 flex flex-wrap gap-3"
-        >
-          <a
-            href={REPO} target="_blank" rel="noopener"
-            className="inline-flex items-center gap-2 rounded-lg bg-violet px-5 py-3 text-[15px] font-semibold text-base transition-colors hover:bg-violets"
-          >
-            <Github className="h-4 w-4" /> View the source
-          </a>
-          <a
-            href="#problem"
-            className="inline-flex items-center gap-2 rounded-lg border border-line px-5 py-3 text-[15px] font-medium transition-colors hover:border-faint"
-          >
-            See the problem <ArrowRight className="h-4 w-4" />
-          </a>
-        </motion.div>
-
-        <div className="relative mt-12 rounded-xl">
-          <Terminal title="sentinel — grading one candidate">
-            <TypingAnimation delay={300} className="text-violets">
-              $ sentinel targets/vulnerable_app --build-env --report report.html
-            </TypingAnimation>
-            <AnimatedSpan delay={1600} className="text-muted">
-              <span><span className="text-faint">ingest</span>{"    "}AST code map · 1 module</span>
-            </AnimatedSpan>
-            <AnimatedSpan delay={2000} className="text-warn">
-              <span>hunter{"    "}candidate → SQL injection · app.py:33</span>
-            </AnimatedSpan>
-            <AnimatedSpan delay={2400} className="text-violets">
-              <span>gate{"      "}taint path: request.args.get() → cursor.execute · proceed</span>
-            </AnimatedSpan>
-            <AnimatedSpan delay={2800} className="text-muted">
-              <span>sandbox{"   "}docker · network-off · caps-dropped · ephemeral</span>
-            </AnimatedSpan>
-            <AnimatedSpan delay={3200} className="text-proof">
-              <span className="font-bold">sandbox{"   "}SENTINEL_PWNED</span>
-            </AnimatedSpan>
-            <AnimatedSpan delay={3600} className="text-proof">
-              <span className="font-bold">witness{"   "}app.py:33 executed during the exploit</span>
-            </AnimatedSpan>
-            <AnimatedSpan delay={4100} className="text-proof">
-              <span className="font-bold">
-                LINE PROVEN{"  "}
-                <span className="font-normal text-ink">SQL injection · critical · fix diff written</span>
-              </span>
-            </AnimatedSpan>
-          </Terminal>
-          <BorderBeam size={120} duration={10} />
+    <header id="top" className="mx-auto max-w-page px-4 pb-16 pt-14 sm:px-8 sm:pb-24 sm:pt-20">
+      <p className="font-mono text-[12px] uppercase tracking-[.14em] text-muted">
+        Autonomous AppSec agent · Python · MIT
+      </p>
+      <div className="mt-8 grid gap-12 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:items-end">
+        <div>
+          <h1 className="text-[40px] font-semibold leading-[1.04] tracking-[-0.025em] text-ink sm:text-[60px]">
+            A finding is a claim.
+            <br />
+            Sentinel makes it <span className="text-proof">prove itself</span>.
+          </h1>
+          <p className="mt-6 max-w-[54ch] text-[17px] leading-[1.6] text-body sm:text-[18px]">
+            An LLM will invent a vulnerability, then write an exploit that &ldquo;proves&rdquo; it
+            without ever running your code. Sentinel runs the exploit against the exact line it
+            accused, under a tracer, and grades the finding by what actually executed. Then it
+            replays the same exploit against its own fix.
+          </p>
+          <div className="mt-8 flex flex-wrap gap-3 text-[15px]">
+            <a href={REPO} target="_blank" rel="noopener noreferrer"
+               className="inline-flex items-center gap-2 bg-ink px-5 py-2.5 font-medium text-paper hover:opacity-85">
+              <Github className="h-4 w-4" aria-hidden /> Read the source
+            </a>
+            <a href="./sample-report.html"
+               className="inline-flex items-center gap-2 border border-ink px-5 py-2.5 font-medium text-ink hover:bg-panel">
+              Sample report <ArrowUpRight className="h-4 w-4" aria-hidden />
+            </a>
+          </div>
         </div>
+
+        <figure className="min-w-0 border border-rule bg-panel">
+          <figcaption className="flex justify-between border-b border-rule px-4 py-2 font-mono text-[11.5px] text-muted">
+            <span>evidence record</span><span>illustrative</span>
+          </figcaption>
+          <dl className="px-4 py-3 font-mono text-[12.5px] leading-[1.9]">
+            {RECORD.map(([k, v, tone]) => (
+              <div key={k} className="grid grid-cols-[72px_minmax(0,1fr)] gap-3">
+                <dt className="text-muted">{k}</dt>
+                <dd className={cn("min-w-0 break-words text-ink", tone)}>{v}</dd>
+              </div>
+            ))}
+          </dl>
+        </figure>
       </div>
     </header>
   );
@@ -148,406 +160,277 @@ function Hero() {
 
 /* ---------------------------------------------------------------- problem */
 
-function ProofRow({ tone, icon: Icon, head, poc, marker, trace, verdict, vtone }) {
+const GENERIC = `import sqlite3
+conn = sqlite3.connect(":memory:")
+conn.execute("CREATE TABLE t (a TEXT)")
+q = "SELECT * FROM t WHERE a = '" + payload + "'"
+if conn.execute(q).fetchall():
+    print("SENTINEL_PWNED")`;
+
+const TARGETED = `import app
+conn = app.setup()
+rows = app.login(conn, "' OR '1'='1")
+if rows:
+    print("SENTINEL_PWNED")`;
+
+function Exhibit({ tag, head, code, trace, verdict, tone }) {
   return (
-    <div className={cn("rounded-xl border bg-surface p-5", tone)}>
-      <div className="mb-3 flex items-center gap-2 font-display text-[15px] font-semibold">
-        <Icon className="h-4 w-4" /> {head}
-      </div>
-      <pre className="mb-4 overflow-x-auto rounded-lg border border-line bg-base p-3 font-mono text-[12px] leading-relaxed text-muted">
-{poc}
-      </pre>
-      <dl className="space-y-2 text-[13px]">
-        <div className="flex justify-between gap-3">
-          <dt className="text-faint">Success marker</dt>
-          <dd className="font-mono text-proof">{marker}</dd>
-        </div>
-        <div className="flex justify-between gap-3">
-          <dt className="text-faint">Line trace</dt>
-          <dd className={cn("font-mono", trace.ok ? "text-proof" : "text-sev")}>{trace.text}</dd>
-        </div>
-        <div className="flex justify-between gap-3 border-t border-line pt-2">
-          <dt className="text-faint">Graded</dt>
-          <dd className={cn("font-mono font-bold", vtone)}>{verdict}</dd>
-        </div>
+    <figure className="flex min-w-0 flex-col border border-rule">
+      <figcaption className="flex items-baseline justify-between border-b border-rule px-4 py-2.5">
+        <span className="text-[14.5px] font-medium text-ink">{head}</span>
+        <span className="font-mono text-[11.5px] text-muted">{tag}</span>
+      </figcaption>
+      <pre className="flex-1 overflow-x-auto bg-panel p-4 font-mono text-[12.5px] leading-relaxed text-ink">{code}</pre>
+      <dl className="grid grid-cols-3 border-t border-rule font-mono text-[12px]">
+        <div className="border-r border-rule px-4 py-2.5"><dt className="text-muted">marker</dt><dd className="text-proof">printed</dd></div>
+        <div className="border-r border-rule px-4 py-2.5"><dt className="text-muted">trace</dt><dd className={trace.ok ? "text-proof" : "text-sev"}>{trace.text}</dd></div>
+        <div className="px-4 py-2.5"><dt className="text-muted">graded</dt><dd className={cn("font-semibold", tone)}>{verdict}</dd></div>
       </dl>
-    </div>
+    </figure>
   );
 }
 
 function Problem() {
   return (
-    <Section
-      id="problem"
-      label="The problem"
-      title="Both of these exploits print the success marker."
-      lede="Only one of them touched the code it accused. A scanner that checks for the marker alone reports them identically — and that is how a confident, well-formatted, entirely fabricated finding reaches a developer."
-    >
+    <Section id="problem" n="01" label="Problem"
+      title="Both exploits print the success marker. One of them never ran your code."
+      lede="A scanner that checks for the marker alone reports these identically, and that is how a confident, well-formatted, fabricated finding reaches a developer.">
       <div className="mt-10 grid gap-4 md:grid-cols-2">
-        <ProofRow
-          tone="border-sev/40"
-          icon={X}
-          head="Reproduces the pattern in isolation"
-          poc={`import sqlite3
-conn = sqlite3.connect(":memory:")
-conn.execute("CREATE TABLE t (a TEXT)")
-q = "SELECT * FROM t WHERE a = '" + payload + "'"
-if conn.execute(q).fetchall():
-    print("SENTINEL_PWNED")`}
-          marker="printed"
-          trace={{ ok: false, text: "app.py never executed" }}
-          verdict="CLASS ONLY"
-          vtone="text-warn"
-        />
-        <ProofRow
-          tone="border-proof/40"
-          icon={Check}
-          head="Drives the real reported code"
-          poc={`import app
-conn = app.setup()
-rows = app.login(conn, "' OR '1'='1")
-if rows:
-    print("SENTINEL_PWNED")`}
-          marker="printed"
-          trace={{ ok: true, text: "app.py:33 executed" }}
-          verdict="LINE PROVEN"
-          vtone="text-proof"
-        />
+        <Exhibit tag="A" head="Reproduces the pattern in isolation" code={GENERIC}
+                 trace={{ ok: false, text: "app.py never ran" }} verdict="CLASS ONLY" tone="text-warn" />
+        <Exhibit tag="B" head="Drives the reported code" code={TARGETED}
+                 trace={{ ok: true, text: "app.py:33 ran" }} verdict="LINE PROVEN" tone="text-proof" />
       </div>
-      <p className="mt-6 max-w-[68ch] text-[15px] leading-relaxed text-muted">
-        Published work on generated exploits found that re-running them with
-        instrumentation invalidated roughly <span className="text-ink">44%</span> of
-        the ones that had passed a marker-only check. Those systems compare the trace
-        against a vulnerable location supplied by a labeled benchmark — which works for
-        measuring a technique, but not on code where nobody knows the answer yet.
+      <p className="mt-8 max-w-[66ch] text-[15.5px] leading-[1.65] text-body">
+        Published work on generated exploits found that re-running them with instrumentation
+        invalidated roughly <strong className="font-semibold text-ink">44%</strong> of those that had passed a
+        marker-only check. Those systems compare the trace with a location from a labelled benchmark,
+        which measures a technique but cannot run on unlabelled code. Sentinel uses the finding&rsquo;s
+        own reported line as the target, so the check needs no ground truth.
       </p>
-    </Section>
-  );
-}
-
-/* ------------------------------------------------------------ contribution */
-
-function Lab() {
-  return (
-    <Section
-      id="lab"
-      label="Try it"
-      title="Run the four exploits and watch the trace."
-      lede="Same target, same accused line, four different proofs. Two of them print the success marker without ever exercising the reported code. Pick one and run it."
-    >
       <ProofLab />
     </Section>
   );
 }
 
-function Contribution() {
-  return (
-    <Section
-      id="idea"
-      label="The idea"
-      title="Make the claim check itself."
-      lede="The hunter asserts a class, a file, and a line. That assertion is its own witness target — so the trace can be checked without any ground truth, on code that has never been labeled."
-    >
-      <div className="relative mt-10 overflow-hidden rounded-xl border border-line bg-surface p-6 sm:p-8">
-        <div
-          aria-hidden
-          className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-violet to-transparent"
-        />
-        <div className="relative grid gap-6 font-mono text-[13px] sm:grid-cols-3">
-          <div>
-            <p className="mb-2 text-faint">The claim</p>
-            <p className="text-ink">SQL Injection</p>
-            <p className="text-violets">app.py:33</p>
-          </div>
-          <div>
-            <p className="mb-2 text-faint">Becomes the target</p>
-            <p className="text-muted">trace app.py</p>
-            <p className="text-muted">did line 33 run?</p>
-          </div>
-          <div>
-            <p className="mb-2 text-faint">Grades itself</p>
-            <p className="text-proof">yes → line proven</p>
-            <p className="text-warn">no → class only</p>
-          </div>
-        </div>
-      </div>
+/* ----------------------------------------------------------------- method */
 
-      <div className="mt-6 grid gap-3 sm:grid-cols-2">
+function Method() {
+  return (
+    <Section id="method" n="02" label="Method"
+      title="Grade every candidate by what was demonstrated."
+      lede="A yes/no scanner throws away the most useful thing it knows: how much it actually showed. The cheap deterministic check runs before the expensive stochastic one, so invented candidates cost nothing to reject.">
+      <Table head={["Tier", "Rule", "What happens"]}>
         {TIERS.map((t) => (
-          <div key={t.key} className="rounded-xl border border-line bg-surface p-5">
-            <div className="mb-2 flex items-center gap-2.5">
-              <span
-                className={cn(
-                  "rounded-md px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-wide",
-                  t.tone === "proof" && "bg-proof/15 text-proof",
-                  t.tone === "warn" && "bg-warn/15 text-warn",
-                  t.tone === "violet" && "bg-violet/15 text-violets",
-                  t.tone === "muted" && "bg-line text-muted"
-                )}
-              >
-                {t.label}
-              </span>
-              <code className="text-[12px] text-faint">{t.rule}</code>
-            </div>
-            <p className="text-[14px] leading-relaxed text-muted">{t.meaning}</p>
+          <tr key={t.key}>
+            <td className={cn("whitespace-nowrap px-4 py-3 font-mono text-[12.5px] font-semibold uppercase tracking-wide", toneText[t.tone])}>{t.label}</td>
+            <td className="px-4 py-3 text-body">{t.rule}</td>
+            <td className="px-4 py-3 text-muted">{t.counted}</td>
+          </tr>
+        ))}
+      </Table>
+
+      <ol className="mt-14 grid gap-px border border-rule bg-rule sm:grid-cols-2 lg:grid-cols-3">
+        {PIPELINE.map((s) => (
+          <li key={s.n} className="bg-paper p-5">
+            <p className="font-mono text-[12px] text-muted">{s.n}</p>
+            <h3 className="mt-1 text-[17px] font-semibold text-ink">{s.title}</h3>
+            <p className="mt-2 text-[14.5px] leading-[1.6] text-body">{s.body}</p>
+          </li>
+        ))}
+      </ol>
+
+      <h3 className="mt-16 text-[20px] font-semibold text-ink">The static gate</h3>
+      <p className="mt-3 max-w-[64ch] text-[15.5px] leading-[1.65] text-body">
+        On the clean control, attacker data genuinely reaches <code className="font-mono text-[14px]">cursor.execute</code> and{" "}
+        <code className="font-mono text-[14px]">subprocess.run</code>. The code is safe because of how those calls are
+        made, so a gate that modelled taint alone would catch nothing. It may reject only on positive
+        evidence; the last row is it declining to guess.
+      </p>
+      <Table head={["Claim", "Location", "Verdict", "Reason"]} min={680}>
+        {GATE.map((g) => (
+          <tr key={g.file + g.claim}>
+            <td className="px-4 py-3 text-ink">{g.claim}</td>
+            <td className="whitespace-nowrap px-4 py-3 font-mono text-[12.5px] text-body">{g.file}</td>
+            <td className={cn("whitespace-nowrap px-4 py-3 font-mono text-[12.5px]", g.blocked ? "text-ink" : "text-muted")}>
+              {g.blocked ? "rejected · " : "proceeds · "}{g.verdict}
+            </td>
+            <td className="px-4 py-3 text-muted">{g.detail}</td>
+          </tr>
+        ))}
+      </Table>
+    </Section>
+  );
+}
+
+/* -------------------------------------------------------------- hardening */
+
+const SEV_TONE = { critical: "text-sev", high: "text-sev", medium: "text-warn" };
+
+function Hardening() {
+  return (
+    <Section id="hardening" n="03" label="Hardening"
+      title="The exploit is untrusted code. So is the code being scanned."
+      lede="A scanner earns its keep on code nobody has vetted, and that code can carry instructions for the model reading it. Each control below is pinned by a test that fails if it is removed.">
+      <div className="mt-10 grid gap-px border border-rule bg-rule md:grid-cols-3">
+        {CONTROLS.map((c) => (
+          <div key={c.title} className="bg-paper p-5">
+            <h3 className="text-[16px] font-semibold text-ink">{c.title}</h3>
+            <ul className="mt-3 space-y-1.5 text-[14px] leading-[1.5] text-body">
+              {c.items.map((item) => (
+                <li key={item} className="flex gap-2">
+                  <span className="mt-[9px] h-px w-2.5 shrink-0 bg-muted" aria-hidden />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         ))}
       </div>
-    </Section>
-  );
-}
 
-/* --------------------------------------------------------------- pipeline */
-
-function Pipeline() {
-  const container = useRef(null);
-  const refs = PIPELINE.map(() => useRef(null));
-
-  return (
-    <Section
-      id="how"
-      label="The loop"
-      title="Five stages, one rule: nothing ships unproven."
-      lede="The cheap deterministic check runs before the expensive stochastic one, so hallucinated candidates are rejected for free rather than after several model calls and container runs."
-    >
-      <div ref={container} className="relative mt-10">
-        {refs.slice(0, -1).map((r, i) => (
-          <AnimatedBeam
-            key={i}
-            containerRef={container}
-            fromRef={r}
-            toRef={refs[i + 1]}
-            duration={5}
-            delay={i * 0.6}
-            pathWidth={1.5}
-          />
-        ))}
-        <div className="relative grid gap-3">
-          {PIPELINE.map((s, i) => (
-            <div
-              key={s.id}
-              ref={refs[i]}
-              className={cn(
-                "relative overflow-hidden rounded-xl border bg-surface p-5 transition-colors",
-                s.accent ? "border-violet/40" : "border-line hover:border-faint"
-              )}
-            >
-              {s.accent && <BorderBeam size={70} duration={9} />}
-              <div className="flex items-baseline gap-3">
-                <span className="mr-3 font-mono text-[12px] text-faint">{s.n}</span>
-                <h3 className="font-display text-[17px] font-semibold tracking-tight">{s.title}</h3>
-              </div>
-              <p className="mt-2 max-w-[70ch] text-[14px] leading-relaxed text-muted">{s.body}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </Section>
-  );
-}
-
-/* ----------------------------------------------------------------- gate */
-
-function Gate() {
-  return (
-    <Section
-      id="gate"
-      label="The static gate"
-      title="Attacker data reaching a dangerous call is not the same as a bug."
-      lede="On the clean control, tainted input genuinely does flow into cursor.execute and subprocess.run. The code is safe because of how those calls are made. A gate that modeled taint alone would wave both through — recognizing the safe idiom is what makes it useful."
-    >
-      <div className="mt-10 overflow-x-auto rounded-xl border border-line">
-        <table className="w-full min-w-[640px] text-left text-[13.5px]">
-          <thead>
-            <tr className="bg-base/60 font-mono text-[12px] text-faint">
-              <th className="px-4 py-3 font-medium">Claim</th>
-              <th className="px-4 py-3 font-medium">Location</th>
-              <th className="px-4 py-3 font-medium">Verdict</th>
-              <th className="px-4 py-3 font-medium">Why</th>
-            </tr>
-          </thead>
-          <tbody>
-            {GATE.map((g, i) => (
-              <tr key={i} className="border-t border-line">
-                <td className="px-4 py-3">{g.claim}</td>
-                <td className="px-4 py-3 font-mono text-[12.5px] text-violets">{g.file}</td>
-                <td className="px-4 py-3">
-                  <span
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-[11.5px] font-semibold",
-                      g.blocked ? "bg-violet/15 text-violets" : "bg-proof/10 text-proof"
-                    )}
-                  >
-                    {g.blocked ? <X className="h-3 w-3" /> : <Check className="h-3 w-3" />}
-                    {g.verdict}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-muted">{g.detail}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="mt-5 flex items-start gap-2 text-[14px] leading-relaxed text-muted">
-        <Minus className="mt-1.5 h-3 w-3 shrink-0 text-faint" />
-        <span>
-          The last row is the gate declining to guess. An environment-variable read is not
-          a string literal, so it cannot be called safe — it fails open and validation
-          decides. The gate may only reject on positive evidence, never on ignorance.
-        </span>
+      <h3 className="mt-16 text-[20px] font-semibold text-ink">Audit, September 2026</h3>
+      <p className="mt-3 max-w-[64ch] text-[15.5px] leading-[1.65] text-body">
+        A review of the pipeline against its own threat model. Every finding was reproduced
+        against the prior code before it was fixed, and each fix ships with a regression test.
       </p>
+      <Table head={["Severity", "Area", "Finding", "Fix"]} min={760}>
+        {AUDIT.map((a) => (
+          <tr key={a.area + a.finding.slice(0, 20)} className="align-top">
+            <td className={cn("px-4 py-3 font-mono text-[12px] font-semibold uppercase", SEV_TONE[a.severity])}>{a.severity}</td>
+            <td className="px-4 py-3 text-ink">{a.area}</td>
+            <td className="px-4 py-3 text-body">{a.finding}</td>
+            <td className="px-4 py-3 text-muted">{a.fix}</td>
+          </tr>
+        ))}
+      </Table>
     </Section>
   );
 }
 
-/* --------------------------------------------------------------- results */
-
-function Stat({ value, suffix, label, decimals = 0, tone }) {
-  return (
-    <div className="rounded-xl border border-line bg-surface p-5">
-      <div className={cn("font-display text-[30px] font-semibold tracking-tight sm:text-[34px]", tone)}>
-        <NumberTicker value={value} decimalPlaces={decimals} suffix={suffix} />
-      </div>
-      <div className="mt-2 text-[13px] leading-snug text-muted">{label}</div>
-    </div>
-  );
-}
+/* ---------------------------------------------------------------- results */
 
 function Results() {
   return (
-    <Section
-      id="results"
-      label="Results · v1, measured August 2026"
-      title="Every figure here is a measured range."
-      lede="Scored by a reproducible harness against labeled ground truth: four targets, five vulnerability classes, plus a clean control. These runs used the v1 validator, before the execution witness existed. Hosted providers are not bit-reproducible even at temperature 0, so the same model varies between runs."
-    >
-      <div className="mt-10 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat value={5} label="Vulnerability classes in the benchmark, plus a clean control" />
-        <Stat value={71} suffix="%" label="Lowest precision across three v1 runs; the highest was 100%" />
-        <Stat value={100} suffix="%" label="v1 recall on the two hardest classes after the self-correction loop, up from 60%" />
-        <Stat value={5} label="Evidence tiers, reported separately and never collapsed into yes or no" tone="text-proof" />
+    <Section id="results" n="04" label="Results"
+      title="Measured, with the caveats that come with it."
+      lede="Three runs of the current pipeline with gpt-oss-120b, on four targets holding five labelled bugs and a clean control, exploits running in each target's dependency image with the network off.">
+      <div className="mt-8 border border-l-4 border-rule border-l-warn bg-panel p-5 text-[15px] leading-[1.6] text-body">
+        <strong className="font-semibold text-ink">Re-measurement pending.</strong> These runs predate the
+        September 2026 audit. The benchmark targets then carried comments naming each bug, which the model
+        could read, and the gate and witness fixes change grading. Treat the figures as history until the
+        next run lands in <code className="font-mono text-[13.5px]">benchmarks/results/</code>.
       </div>
 
-      <div className="mt-6 overflow-x-auto rounded-xl border border-line">
-        <table className="w-full min-w-[620px] text-left text-[13.5px]">
-          <thead>
-            <tr className="bg-base/60 font-mono text-[12px] text-faint">
-              <th className="px-4 py-3 font-medium">Run</th>
-              <th className="px-4 py-3 font-medium">Model</th>
-              <th className="px-4 py-3 font-medium">Precision</th>
-              <th className="px-4 py-3 font-medium">Recall</th>
-              <th className="px-4 py-3 font-medium">F1</th>
-              <th className="px-4 py-3 font-medium">Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {RUNS.map((r) => (
-              <tr key={r.run} className="border-t border-line">
-                <td className="px-4 py-3">{r.run}</td>
-                <td className="px-4 py-3 font-mono text-[12.5px] text-violets">{r.model}</td>
-                <td className="px-4 py-3">{r.precision}</td>
-                <td className="px-4 py-3">{r.recall}</td>
-                <td className="px-4 py-3">{r.f1}</td>
-                <td className="px-4 py-3 text-faint">{r.note}</td>
+      <Table head={["Run", "Strict recall · line proven", "Permissive recall · marker", "False positives", "Note"]} min={680}>
+        {CURRENT_RUNS.map((r) => (
+          <tr key={r.run}>
+            <td className="px-4 py-3 font-mono text-muted">{r.run}</td>
+            <td className="px-4 py-3"><span className="text-[17px] font-semibold text-ink">{r.strict}</span> <span className="text-muted">({r.strictN})</span></td>
+            <td className="px-4 py-3"><span className="text-[17px] font-semibold text-ink">{r.permissive}</span> <span className="text-muted">({r.permissiveN})</span></td>
+            <td className="px-4 py-3 font-mono text-ink">{r.fp}</td>
+            <td className="px-4 py-3 text-muted">{r.note}</td>
+          </tr>
+        ))}
+      </Table>
+
+      <div className="mt-8 grid gap-6 text-[15px] leading-[1.65] text-body md:grid-cols-2">
+        <p>
+          <strong className="font-semibold text-ink">Strict recall cannot exceed 80% here.</strong> The
+          hardcoded secret sits on a module-level line that runs only on import, and import-time
+          execution is never counted. That one finding is the whole gap between the two readings in every run.
+        </p>
+        <p>
+          <strong className="font-semibold text-ink">There is no precision figure.</strong> Three or four
+          findings were line-proven per run, too few to divide by, and the clean control was only
+          analysed in one run: in the other two the model&rsquo;s reply could not be parsed.{" "}
+          <a href={RESULTS_FILE} className="text-ink underline" target="_blank" rel="noopener noreferrer">Unedited results file</a>.
+        </p>
+      </div>
+
+      <details className="mt-10 border border-rule">
+        <summary className="cursor-pointer px-4 py-3 text-[15px] font-medium text-ink hover:bg-panel">
+          v1 runs, August 2026: a different validator
+        </summary>
+        <div className="border-t border-rule px-4 pb-5">
+          <p className="mt-4 max-w-[66ch] text-[14.5px] leading-[1.6] text-body">
+            The v1 validator asked for self-contained exploits that did not import the target, so every
+            success below reproduced a pattern in isolation: class-only at best on today&rsquo;s ladder.
+            Kept because it is what was measured.
+          </p>
+          <Table head={["Run", "Model", "Precision", "Recall", "F1", "Note"]} min={620}>
+            {V1_RUNS.map((r) => (
+              <tr key={r.run}>
+                <td className="px-4 py-3 font-mono text-muted">{r.run}</td>
+                <td className="px-4 py-3 font-mono text-[12.5px] text-body">{r.model}</td>
+                <td className="px-4 py-3 text-ink">{r.precision}</td>
+                <td className="px-4 py-3 text-ink">{r.recall}</td>
+                <td className="px-4 py-3 text-ink">{r.f1}</td>
+                <td className="px-4 py-3 text-muted">{r.note}</td>
               </tr>
             ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="mt-6 rounded-xl border border-line border-l-2 border-l-violet bg-surface p-6">
-        <p className="text-[14.5px] leading-relaxed text-muted">
-          <span className="font-medium text-ink">Why a range, not a headline number.</span>{" "}
-          Five cases is far too few to quote a single figure from with confidence. The
-          honest summary is the spread: <span className="text-ink">precision 71–100%, recall 80–100%</span>.
-          The result worth defending is not a score but a methodology where every change
-          is measurable — the harness caught the recall regression in run 1 and the
-          precision drop in run 3 before either slipped past, and{" "}
-          <span className="font-medium text-proof">recall on the two hardest classes rose from 60% to 100%</span>{" "}
-          after the self-correction loop was added, with precision holding.
-        </p>
-        <p className="mt-4 text-[14.5px] leading-relaxed text-muted">
-          <span className="font-medium text-ink">What these runs did not measure.</span>{" "}
-          The v1 validator asked the model for a self-contained exploit that did not import
-          the target, so every success in this table reproduced the vulnerability pattern in
-          isolation. On today&rsquo;s evidence ladder that is class-only at best.
-        </p>
-        <p className="mt-4 text-[14.5px] leading-relaxed text-muted">
-          <span className="font-medium text-ink">The current pipeline, September 2026.</span>{" "}
-          Three runs with <code className="font-mono text-violets">gpt-oss-120b</code>:
-          strict (line-proven) recall 60&ndash;80%, permissive recall 80&ndash;100%, no
-          false positives. Strict recall cannot exceed 80% here, because the hardcoded
-          secret sits on a module-level line that execution cannot prove, and that one
-          finding was the whole gap in every run. There is no precision figure: too few
-          findings were line-proven, and the clean control was analysed in only one of
-          the three runs. The README gives the full breakdown and the results file.
-        </p>
-        <p className="mt-4 text-[14.5px] leading-relaxed text-muted">
-          The evaluator now scores the same scan twice — once counting any exploit that
-          printed the marker, once counting only line-proven findings. The gap between
-          those two numbers is exactly the amount a marker-only scanner overstates.
-        </p>
-      </div>
-    </Section>
-  );
-}
-
-/* ---------------------------------------------------------------- report */
-
-function Report() {
-  return (
-    <Section
-      id="report"
-      label="The artifact"
-      title="The output is a case file, not a warning list."
-      lede="A scan writes a self-contained HTML report — no external requests, no JavaScript. Each finding carries its evidence tier, the exploit, the line trace that graded it, and the fix diff. Rejected and class-only candidates are shown too, so nothing is silently dropped."
-    >
-      <div className="relative mt-10 overflow-hidden rounded-xl border border-line bg-surface">
-        <img
-          src="./report-preview.png"
-          alt="Sentinel HTML report rendered from a fixture, showing one line-proven SQL injection, two class-only findings, one not-testable finding and one gated-out candidate."
-          className="block w-full"
-          loading="lazy"
-        />
-        <div className="border-t border-line px-5 py-4 text-[13.5px] text-muted">
-          Rendered by Sentinel&rsquo;s real report code from the test suite&rsquo;s fixture, so
-          every evidence tier appears on one page. It is not a scan result.
+          </Table>
         </div>
+      </details>
+    </Section>
+  );
+}
+
+/* ------------------------------------------------------------------ usage */
+
+function Usage() {
+  return (
+    <Section id="usage" n="05" label="Output"
+      title="A case file for people, SARIF for pipelines."
+      lede="A scan writes a self-contained HTML report with no script and no external requests, JSON, and SARIF 2.1.0 for GitHub code scanning. Only line-proven findings are errors and only they can fail a build; class-only findings are warnings; suspicions stay out of the dashboard.">
+      <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+        <figure className="min-w-0 border border-rule">
+          <img src="./report-preview.png" loading="lazy" className="block w-full"
+               alt="Sentinel's HTML report rendered from the test fixture: one line-proven SQL injection, class-only, not-testable and gated-out candidates." />
+          <figcaption className="border-t border-rule px-4 py-2.5 text-[13px] text-muted">
+            The real renderer on the test fixture, so every tier appears. Not a scan result.{" "}
+            <a className="text-ink underline" href="./sample-report.html">Open it</a>.
+          </figcaption>
+        </figure>
+        <figure className="flex min-w-0 flex-col border border-rule">
+          <figcaption className="border-b border-rule px-4 py-2.5 font-mono text-[11.5px] text-muted">
+            .github/workflows/security.yml · excerpt
+          </figcaption>
+          <pre className="flex-1 overflow-x-auto bg-panel p-4 font-mono text-[12.5px] leading-relaxed text-ink">{CI_SNIPPET}</pre>
+        </figure>
       </div>
     </Section>
   );
 }
 
-/* ---------------------------------------------------------------- limits */
+/* ----------------------------------------------------------------- limits */
 
 function Limits() {
   return (
-    <Section id="limits" label="Honest limits" title="What it does not do.">
-      <ul className="mt-8 divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
+    <Section id="limits" n="06" label="Limits" title="What it does not do.">
+      <ol className="mt-8 divide-y divide-rule border-y border-rule">
         {LIMITS.map((l, i) => (
-          <li key={i} className="px-5 py-4 text-[14.5px] leading-relaxed text-muted">
-            {l}
+          <li key={l} className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 py-4 text-[15px] leading-[1.6] text-body">
+            <span className="font-mono text-[12px] leading-[1.6rem] text-muted">{String(i + 1).padStart(2, "0")}</span>
+            <span>{l}</span>
           </li>
         ))}
-      </ul>
+      </ol>
     </Section>
   );
 }
 
 function Footer() {
   return (
-    <footer className="border-t border-line py-12">
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-5 px-5 sm:px-8">
-        <p className="text-[13.5px] leading-relaxed text-faint">
-          Sentinel — autonomous AppSec agent.
-          <br />
-          Inspired by the cyber-reasoning systems of DARPA&rsquo;s AI Cyber Challenge, scoped as a
-          single-developer build. MIT licensed.
+    <footer className="border-t border-rule">
+      <div className="mx-auto flex max-w-page flex-wrap items-baseline justify-between gap-4 px-4 py-10 text-[14px] sm:px-8">
+        <p className="text-muted">
+          <span className="font-mono font-semibold tracking-[.14em] text-ink">SENTINEL</span>{" "}
+          · Rahul Paul · MIT licensed
         </p>
-        <div className="flex flex-wrap gap-5 text-[14px]">
-          <a className="text-muted transition-colors hover:text-ink" href={REPO} target="_blank" rel="noopener">Source</a>
-          <a className="text-muted transition-colors hover:text-ink" href={`${REPO}#quickstart`} target="_blank" rel="noopener">Quickstart</a>
-          <a className="text-muted transition-colors hover:text-ink" href="https://github.com/rahulpaul-07" target="_blank" rel="noopener">More work</a>
+        <div className="flex gap-5">
+          <a className="text-body hover:text-ink" href={REPO} target="_blank" rel="noopener noreferrer">Source</a>
+          <a className="text-body hover:text-ink" href={`${REPO}#quickstart`} target="_blank" rel="noopener noreferrer">Quickstart</a>
+          <a className="text-body hover:text-ink" href="https://github.com/rahulpaul-07" target="_blank" rel="noopener noreferrer">GitHub</a>
         </div>
       </div>
     </footer>
@@ -558,16 +441,15 @@ export default function App() {
   return (
     <>
       <Nav />
-      <div id="top" />
-      <Hero />
-      <Problem />
-      <Lab />
-      <Contribution />
-      <Pipeline />
-      <Gate />
-      <Results />
-      <Report />
-      <Limits />
+      <main>
+        <Hero />
+        <Problem />
+        <Method />
+        <Hardening />
+        <Results />
+        <Usage />
+        <Limits />
+      </main>
       <Footer />
     </>
   );
