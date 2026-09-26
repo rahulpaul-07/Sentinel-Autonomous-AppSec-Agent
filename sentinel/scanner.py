@@ -17,7 +17,11 @@ Design choices worth defending:
     rejection -- each avoided validation is several model calls plus container runs.
     It fails open: anything it cannot analyze proceeds to validation.
   * We patch each FILE once, not each finding. Several findings often share a file,
-    so we group confirmed findings by file and generate a single fix per file.
+    so we group line-proven findings by file and ask for one fix covering all of
+    them. (It used to pass only the first, so the others stayed unfixed.)
+  * A fix is checked, not trusted. The exploit that proved each finding is replayed
+    against a patched copy of the tree: no model call, just the sandbox. A fix is
+    VERIFIED only if the patched code ran and no exploit succeeded.
   * A budget (max_findings) caps how much work we do, so a huge repo can't run away
     with time and tokens.
   * A confidence gate (min_confidence) skips validating candidates the hunter itself
@@ -29,18 +33,22 @@ Design choices worth defending:
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from sentinel.llm import LLMClient
-from sentinel.tools import Tools
+from sentinel.tools import IGNORE_DIRS, Tools
 from sentinel.hunter import Hunter, Finding
 from sentinel.sandbox import Sandbox
 from sentinel.environment import Environment, prepare_environment
 from sentinel.validator import Validator, ValidationResult
-from sentinel.patcher import Patcher, Patch
+from sentinel.patcher import (
+    INCONCLUSIVE, STILL_EXPLOITABLE, VERIFIED, Patch, Patcher, write_fixed,
+)
 from sentinel.evidence import Evidence
 from sentinel import reachability
 from sentinel.reachability import Reachability
@@ -241,14 +249,7 @@ class ScanReport:
                 "by_evidence": self.evidence_counts(),
             },
             "scanned": [s.to_dict() for s in self.scanned],
-            "patches": [
-                {
-                    "file": p.finding.file,
-                    "vuln_class": p.finding.vuln_class,
-                    "diff": p.diff,
-                }
-                for p in self.patches
-            ],
+            "patches": [p.to_dict() for p in self.patches],
         }
 
 
@@ -263,6 +264,7 @@ class Scanner:
         build_env: bool = False,
         image: str | None = None,
         env_root: str | None = None,
+        verify_fixes: bool = True,
     ) -> None:
         self.llm = llm
         self.target = target
@@ -276,6 +278,7 @@ class Scanner:
         # scoped to part of a repository still needs the repository's own
         # requirements.txt or pyproject.toml.
         self.env_root = env_root if env_root is not None else target
+        self.verify_fixes = verify_fixes
         self.tools = Tools(target)
         self.hunter = Hunter(llm, self.tools)
         sandbox = Sandbox(image=image) if image else Sandbox()
@@ -371,12 +374,47 @@ class Scanner:
         Class-only findings are deliberately NOT patched: if we could not show the
         reported line even runs, we should not rewrite it.
         """
-        by_file: dict[str, list[Finding]] = defaultdict(list)
+        by_file: dict[str, list[ScannedFinding]] = defaultdict(list)
         for s in report.line_proven:
-            by_file[s.finding.file].append(s.finding)
+            by_file[s.finding.file].append(s)
 
         patches: list[Patch] = []
-        for file, findings in by_file.items():
+        for file, proven in by_file.items():
             raw = (Path(self.target) / file).read_text(encoding="utf-8", errors="replace")
-            patches.append(self.patcher.propose(findings[0], raw))
+            patch = self.patcher.propose([s.finding for s in proven], raw)
+            if patch.valid and self.verify_fixes:
+                self._verify_patch(patch, proven)
+            patches.append(patch)
         return patches
+
+    def _verify_patch(self, patch: Patch, proven: list[ScannedFinding]) -> None:
+        """Replay each proving exploit against a patched copy of the target.
+
+        A fix passes only if, for every exploit, the patched code actually ran and
+        the marker did not print. An exploit that now dies before reaching the code
+        -- because the fix renamed a function, or broke the import -- says nothing
+        about the fix, so it is INCONCLUSIVE, not VERIFIED.
+        """
+        outcomes: list[tuple[str, str]] = []
+        with tempfile.TemporaryDirectory(prefix="sentinel-fix-") as tmp:
+            tree = Path(tmp) / "target"
+            shutil.copytree(
+                self.target, tree, symlinks=True,
+                ignore=shutil.ignore_patterns(*IGNORE_DIRS, "*.egg-info"),
+            )
+            write_fixed(tree / patch.file, patch.fixed_code)
+            for s in proven:
+                where = f"{s.finding.vuln_class} (line {s.finding.line})"
+                replay = self.validator.replay(s.validation.poc_code, s.finding, tree)
+                if replay.marker:
+                    outcomes.append((STILL_EXPLOITABLE, f"{where}: the exploit still succeeds"))
+                elif replay.witness is not None and replay.witness.driven_lines:
+                    outcomes.append((VERIFIED, f"{where}: patched code ran, exploit failed"))
+                else:
+                    outcomes.append((INCONCLUSIVE,
+                                     f"{where}: the exploit never reached the patched code"))
+
+        states = {state for state, _ in outcomes}
+        patch.verification = (STILL_EXPLOITABLE if STILL_EXPLOITABLE in states
+                              else VERIFIED if states == {VERIFIED} else INCONCLUSIVE)
+        patch.verification_detail = "; ".join(detail for _, detail in outcomes)

@@ -180,3 +180,33 @@ def test_output_flood_is_capped_inside_the_container():
     assert not result.timed_out          # capping ends it: the writer gets SIGPIPE
     assert 0 < len(result.stdout) <= OUTPUT_CAP_BYTES
     assert 0 < len(result.stderr) <= OUTPUT_CAP_BYTES
+
+
+def test_replaying_the_exploit_verifies_a_real_fix(tmp_path):
+    """The fix check, for real: the proving exploit fails on the parameterized query.
+
+    Catches: replay not mounting the patched tree, or grading "exploit failed" as
+    verified when the patched code never ran.
+    """
+    import shutil
+
+    finding = Finding("SQL Injection", "app.py", SINK_LINE, "high", "fixture", 1.0)
+    validator = Validator(FixedPocLLM(TARGETED_POC), Sandbox(), target=TARGET, max_attempts=1)
+
+    unpatched = validator.replay(TARGETED_POC, finding, TARGET)
+    assert unpatched.marker
+
+    tree = tmp_path / "patched"
+    shutil.copytree(TARGET, tree)
+    source = (tree / "app.py").read_text(encoding="utf-8")
+    fixed = source.replace(
+        "    query = \"SELECT * FROM users WHERE name = '\" + username + \"'\"\n"
+        "    return conn.execute(query).fetchall()",
+        "    return conn.execute(\"SELECT * FROM users WHERE name = ?\", (username,)).fetchall()",
+    )
+    assert fixed != source
+    (tree / "app.py").write_text(fixed, encoding="utf-8")
+
+    patched = validator.replay(TARGETED_POC, finding, tree)
+    assert not patched.marker
+    assert patched.witness.available and patched.witness.driven_lines

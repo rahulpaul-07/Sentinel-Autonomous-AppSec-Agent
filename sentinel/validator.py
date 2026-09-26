@@ -168,6 +168,14 @@ and set up anything it needs. Output ONLY the corrected Python code.
 
 
 @dataclass
+class Replay:
+    """The outcome of re-running a PoC without asking the model for anything."""
+    marker: bool
+    witness: WitnessResult | None
+    output: str
+
+
+@dataclass
 class ValidationResult:
     finding: Finding
     confirmed: bool               # marker printed (either proof tier)
@@ -219,24 +227,11 @@ class Validator:
                     poc = self._fix_poc(finding, code, poc, clean_output, module)
                 continue
 
-            # A fresh nonce per run: only the harness knows it, so only the
-            # harness's record is believed.
-            nonce = new_nonce()
-            harness = build_harness(
-                poc_code=poc,
-                target_file=finding.file,
-                target_line=finding.line,
-                nonce=nonce,
-                mount=MOUNT,
-                workdir="/tmp",
-                import_root=import_root,
+            marker, witness, clean_output = self._execute(
+                poc, finding, import_root, self.target
             )
-            result = self.sandbox.run(self._as_command(harness), workdir=self.target)
-            raw = result.stdout + result.stderr
-            witness = parse_witness(result.stdout, finding.file, finding.line, nonce=nonce)
-            clean_output = strip_witness(raw)
 
-            if MARKER in result.stdout:
+            if marker:
                 evidence = (
                     Evidence.LINE_PROVEN
                     if witness.available and witness.line_executed
@@ -272,6 +267,40 @@ class Validator:
             witness=witness,
             missing_module=missing or "",
         )
+
+    def replay(self, poc: str, finding: Finding, target: str | Path) -> Replay:
+        """Run an existing PoC, unchanged, against another copy of the target.
+
+        Used to check a fix: the exploit that proved the finding is run against the
+        patched tree. No model call is made. The PoC is screened again, because
+        the tree it runs against is different.
+        """
+        refused = screen_poc(poc)
+        if refused:
+            return Replay(marker=False, witness=None, output="refused: " + "; ".join(refused))
+        import_root, _ = resolve_import(target, finding.file)
+        marker, witness, output = self._execute(poc, finding, import_root, Path(target))
+        return Replay(marker=marker, witness=witness, output=output)
+
+    def _execute(
+        self, poc: str, finding: Finding, import_root: str, target: Path | None
+    ) -> tuple[bool, WitnessResult, str]:
+        """Run one PoC under the tracer. Returns (marker printed, witness, output)."""
+        # A fresh nonce per run: only the harness knows it, so only the harness's
+        # record is believed.
+        nonce = new_nonce()
+        harness = build_harness(
+            poc_code=poc,
+            target_file=finding.file,
+            target_line=finding.line,
+            nonce=nonce,
+            mount=MOUNT,
+            workdir="/tmp",
+            import_root=import_root,
+        )
+        result = self.sandbox.run(self._as_command(harness), workdir=target)
+        witness = parse_witness(result.stdout, finding.file, finding.line, nonce=nonce)
+        return MARKER in result.stdout, witness, strip_witness(result.stdout + result.stderr)
 
     # -- prompting --------------------------------------------------------
 

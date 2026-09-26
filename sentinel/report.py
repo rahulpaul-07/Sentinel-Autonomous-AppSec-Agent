@@ -130,7 +130,29 @@ def _gate_block(scanned: dict) -> str:
     )
 
 
-def _finding_card(scanned: dict, patches_by_file: dict[str, str]) -> str:
+# patch verification -> (css slug, label)
+_FIX_STATUS = {
+    "verified": ("fixok", "exploit replayed: fix holds"),
+    "still_exploitable": ("fixbad", "exploit replayed: STILL EXPLOITABLE"),
+    "inconclusive": ("fixmeh", "exploit replayed: did not reach the patched code"),
+    "not_run": ("fixmeh", "not verified"),
+}
+
+
+def _patch_summary(entry: object) -> tuple[str, str]:
+    """(diff, summary html) for a patch given as a diff string or a patch dict."""
+    if not isinstance(entry, dict):
+        return str(entry or ""), "Proposed secure-fix diff"
+    if not entry.get("valid", True):
+        return "", ""
+    css, label = _FIX_STATUS.get(entry.get("verification", "not_run"), _FIX_STATUS["not_run"])
+    detail = _esc(entry.get("verification_detail", ""))
+    return entry.get("diff", ""), (
+        f'Proposed secure-fix diff <span class="fix {css}" title="{detail}">{_esc(label)}</span>'
+    )
+
+
+def _finding_card(scanned: dict, patches_by_file: dict) -> str:
     f = scanned["finding"]
     sev = (f["severity"] or "unknown").lower()
     tier = scanned.get("evidence", "unproven")
@@ -151,11 +173,11 @@ def _finding_card(scanned: dict, patches_by_file: dict[str, str]) -> str:
         </details>"""
 
     diff_block = ""
-    diff = patches_by_file.get(f["file"])
+    diff, summary = _patch_summary(patches_by_file.get(f["file"]))
     if tier == "line_proven" and diff:
         diff_block = f"""
         <details class="drawer">
-          <summary>Proposed secure-fix diff</summary>
+          <summary>{summary}</summary>
           <pre class="code diff">{_diff_html(diff)}</pre>
         </details>"""
 
@@ -182,7 +204,7 @@ def _finding_card(scanned: dict, patches_by_file: dict[str, str]) -> str:
 def render_html(report: ScanReport, title: str = "Sentinel Scan Report") -> str:
     data = report.to_dict()
     counts = data["counts"]
-    patches_by_file = {p["file"]: p["diff"] for p in data["patches"]}
+    patches_by_file = {p["file"]: p for p in data["patches"]}
 
     _TIER_ORDER = {"line_proven": 0, "class_only": 1, "env_incomplete": 2,
                    "unproven": 3, "unreachable": 4}
@@ -372,6 +394,10 @@ html,body {{ margin:0; padding:0; background:var(--bg); color:var(--text);
 .conf {{ color:var(--micro); font-size:12px; }}
 .desc {{ color:var(--text); margin:6px 0 12px; }}
 
+.fix {{ font-size:11px; font-weight:700; margin-left:8px; padding:2px 8px; border-radius:5px; }}
+.fixok {{ color:var(--ok); background:color-mix(in srgb,var(--ok) 14%,transparent); }}
+.fixbad {{ color:var(--bad); background:color-mix(in srgb,var(--bad) 14%,transparent); }}
+.fixmeh {{ color:var(--muted); background:var(--panel2); }}
 .drawer {{ border-top:1px solid var(--line); padding-top:10px; margin-top:6px; }}
 .drawer summary {{ cursor:pointer; color:var(--muted); font-size:13.5px;
   font-weight:600; list-style:none; user-select:none; }}
