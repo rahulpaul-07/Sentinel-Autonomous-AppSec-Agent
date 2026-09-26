@@ -160,3 +160,23 @@ def test_runaway_exploit_is_killed():
     result = Sandbox(timeout_seconds=5).run("sleep 60")
 
     assert result.timed_out
+
+
+def test_exploit_runs_as_an_unprivileged_user():
+    """Catches: `--user` removed, so the PoC runs as root inside the container."""
+    result = Sandbox().run("id -u; grep NoNewPrivs /proc/self/status")
+
+    assert result.stdout.split()[0] == "65534"
+    assert "NoNewPrivs:\t1" in result.stdout
+
+
+def test_output_flood_is_capped_inside_the_container():
+    """Catches: unbounded capture, where `while True: print()` fills host memory."""
+    from sentinel.sandbox import OUTPUT_CAP_BYTES
+
+    flood = "python3 -c \"import sys\nwhile True: sys.stdout.write('A'*65536); sys.stderr.write('B'*65536)\""
+    result = Sandbox(timeout_seconds=20).run(flood)
+
+    assert not result.timed_out          # capping ends it: the writer gets SIGPIPE
+    assert 0 < len(result.stdout) <= OUTPUT_CAP_BYTES
+    assert 0 < len(result.stderr) <= OUTPUT_CAP_BYTES

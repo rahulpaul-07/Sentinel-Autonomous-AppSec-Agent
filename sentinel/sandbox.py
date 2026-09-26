@@ -7,12 +7,16 @@ The Validator uses this to execute proof-of-concept exploit code. That code is
 UNTRUSTED, so the container is deliberately caged:
 
   --network none      no external network access at all
-  --memory / --cpus   capped resources (can't exhaust the host)
+  --memory / --cpus   capped resources (can't exhaust the host); swap capped too
   --pids-limit        cap process count (blocks fork bombs)
   --read-only         root filesystem is immutable; scratch space is a capped tmpfs
   --cap-drop ALL      drop every Linux capability
+  --user 65534        run as `nobody`, not as root inside the container
+  no-new-privileges   setuid binaries cannot raise privileges again
   --rm                the container is deleted the moment it exits
   a hard timeout      we kill anything that runs too long
+  an output cap       stdout and stderr are truncated INSIDE the container, so an
+                      exploit printing in a loop cannot exhaust the host's memory
 
 We shell out to the `docker` CLI with subprocess so every security flag is visible
 in the code -- you should be able to point at each one and say why it's there.
@@ -47,6 +51,25 @@ class SandboxResult:
 
 
 DEFAULT_IMAGE = "python:3.12-slim"
+
+# Bytes kept from each of stdout and stderr. An exploit's useful output is a few
+# kilobytes; the witness record is under 10. Anything past this is noise, and
+# capturing it unbounded let a `while True: print(...)` fill host memory within
+# the timeout.
+OUTPUT_CAP_BYTES = 1_000_000
+
+# The unprivileged user the container runs as (`nobody` in Debian images).
+SANDBOX_USER = "65534:65534"
+
+
+def capped(command: str, limit: int = OUTPUT_CAP_BYTES) -> str:
+    """Wrap a shell command so each of its output streams stops at `limit` bytes.
+
+    fd 3 carries the command's stdout past the pipe that caps its stderr; both caps
+    run inside the container. A writer that overruns its cap gets SIGPIPE.
+    """
+    return (f"{{ {{ {command}; }} 2>&1 1>&3 | head -c {limit} 1>&2; }} 3>&1 "
+            f"| head -c {limit}")
 
 
 class Sandbox:
@@ -107,9 +130,13 @@ class Sandbox:
             "--name", name,
             "--network", "none",           # NO network access
             f"--memory={self.memory}",     # cap RAM
+            f"--memory-swap={self.memory}",  # ...and swap: equal values mean none
             f"--cpus={self.cpus}",         # cap CPU
             f"--pids-limit={self.pids_limit}",  # cap process count (anti fork-bomb)
             "--cap-drop", "ALL",           # drop all Linux capabilities
+            "--security-opt", "no-new-privileges",  # setuid cannot regain them
+            "--user", SANDBOX_USER,        # not root, even inside the container
+            "-e", "PYTHONDONTWRITEBYTECODE=1",  # never try to write into the mount
             "--read-only",                 # immutable root filesystem
             "--tmpfs", "/tmp:size=64m",    # capped scratch space the PoC can write to
         ]
@@ -124,7 +151,7 @@ class Sandbox:
             docker_cmd += ["-w", "/tmp"]
 
         # The image, then run the command through a shell inside the container.
-        docker_cmd += [self.image, "sh", "-c", command]
+        docker_cmd += [self.image, "sh", "-c", capped(command)]
 
         try:
             proc = subprocess.run(

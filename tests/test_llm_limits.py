@@ -135,3 +135,15 @@ def test_client_totals_the_tokens_of_every_successful_call(client):
     c.complete("b")
     assert c.usage() == {"calls": 2, "prompt_tokens": 200, "completion_tokens": 40,
                          "total_tokens": 240}
+
+
+def test_every_request_carries_a_timeout(client, monkeypatch):
+    """A provider that accepts the connection and never answers must not hang a scan."""
+    c, calls, _ = client([])
+    c.complete("hi")
+    assert calls[0]["timeout"] == llm_mod.DEFAULT_REQUEST_TIMEOUT
+
+    monkeypatch.setenv("SENTINEL_LLM_TIMEOUT", "600")
+    c, calls, _ = client([])
+    c.complete("hi")
+    assert calls[0]["timeout"] == 600.0

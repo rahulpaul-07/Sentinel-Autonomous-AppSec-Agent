@@ -56,6 +56,10 @@ _RETRY_HINT = re.compile(
 _HINT_PART = re.compile(r"(\d+(?:\.\d+)?)\s*(ms|h|m|s)", re.IGNORECASE)
 _UNIT_SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
 
+# How long one request may take before it is abandoned and retried. Without a
+# limit, a provider that accepts the connection and never answers hangs the scan.
+DEFAULT_REQUEST_TIMEOUT = 180.0
+
 # The longest a single retry will wait. A provider asking for longer than this is
 # reporting a quota that will not clear during a run, so waiting is pointless.
 MAX_BACKOFF_SECONDS = 60.0
@@ -162,6 +166,7 @@ class LLMClient:
         model: str | None = None,
         temperature: float = 0.0,
         max_retries: int = 4,
+        request_timeout: float | None = None,
     ) -> None:
         _ensure_env()
         # If no model is passed in, read it from the environment (set in .env).
@@ -180,6 +185,11 @@ class LLMClient:
         # Four retries with backoff covers roughly a minute of provider trouble,
         # which is longer than most rate-limit windows.
         self.max_retries = max_retries
+
+        # Overridable per environment: a slow local model needs longer.
+        self.request_timeout = request_timeout or float(
+            os.getenv("SENTINEL_LLM_TIMEOUT", DEFAULT_REQUEST_TIMEOUT)
+        )
 
         # Running totals over every successful call, so a caller can say what a
         # piece of work cost and whether the next one fits in a daily budget.
@@ -239,6 +249,7 @@ class LLMClient:
                     model=self.model,
                     messages=messages,
                     temperature=self.temperature,
+                    timeout=self.request_timeout,
                 )
                 break
             except retryable as exc:

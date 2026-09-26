@@ -102,3 +102,25 @@ def test_sandbox_builds_a_readonly_mount_flag(monkeypatch):
     joined = " ".join(str(c) for c in cmd)
     assert "-v" in cmd
     assert f":{MOUNT}:ro" in joined, f"no read-only mount at {MOUNT} in: {joined}"
+
+
+def test_sandbox_drops_root_and_caps_output(monkeypatch):
+    """Offline guard on the hardening flags; the Docker tests check they take effect."""
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        class R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    Sandbox(memory="256m").run("echo hi")
+    cmd = captured["cmd"]
+
+    assert cmd[cmd.index("--user") + 1] == "65534:65534"
+    assert cmd[cmd.index("--security-opt") + 1] == "no-new-privileges"
+    assert "--memory-swap=256m" in cmd
+    assert "head -c" in cmd[-1] and "echo hi" in cmd[-1]
