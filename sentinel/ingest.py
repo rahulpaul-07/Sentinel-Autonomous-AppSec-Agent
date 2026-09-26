@@ -19,8 +19,7 @@ import ast
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Folders we never analyze (dependencies, caches, version control).
-IGNORE_DIRS = {".venv", "__pycache__", ".git", "node_modules", ".pytest_cache"}
+from sentinel.tools import IGNORE_DIRS, discover  # noqa: F401  (re-exported)
 
 
 @dataclass
@@ -97,11 +96,11 @@ def ingest(root: str | Path) -> CodeMap:
     root_path = Path(root).resolve()
     code_map = CodeMap(root=root_path)
 
-    # rglob("*.py") recursively finds every .py file under root.
-    for py_file in sorted(root_path.rglob("*.py")):
-        # Skip anything inside an ignored directory.
-        if any(part in IGNORE_DIRS for part in py_file.parts):
-            continue
-        code_map.files.append(_extract_from_file(py_file))
+    # The same discovery the hunter uses, so the map and the scan agree on what
+    # the target is. It used to test ignore names against the absolute path, so a
+    # project living under a directory called `build` was mapped as empty.
+    files, _ = discover(root_path)
+    for rel in files:
+        code_map.files.append(_extract_from_file(root_path / rel))
 
     return code_map

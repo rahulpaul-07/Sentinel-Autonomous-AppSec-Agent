@@ -115,6 +115,11 @@ class ScanReport:
     hunter_unreadable_details: dict = field(default_factory=dict)
     hunter_retried: list[str] = field(default_factory=list)
     hunter_dropped: int = 0
+    hunter_duplicates: int = 0
+    # Files never read (symlinks out of the target, oversized files), with reasons.
+    skipped_files: dict = field(default_factory=dict)
+    # Candidates past the max_findings budget: reported by the hunter, never graded.
+    over_budget: list = field(default_factory=list)
 
     # -- evidence-tier views ---------------------------------------------
 
@@ -190,6 +195,13 @@ class ScanReport:
                     "were not analysed; no findings there does not mean none exist.\n")
         if self.hunter_dropped:
             env += f"  WARNING: {self.hunter_dropped} malformed finding(s) dropped.\n"
+        if self.skipped_files:
+            env += ("  WARNING: not read: "
+                    + ", ".join(f"{f} ({why})" for f, why in self.skipped_files.items())
+                    + ".\n")
+        if self.over_budget:
+            env += (f"  WARNING: {len(self.over_budget)} lower-confidence candidate(s) "
+                    "exceeded the --max-findings budget and were not graded.\n")
         return (
             f"Target: {self.target}\n"
             + env
@@ -210,16 +222,20 @@ class ScanReport:
             "hunter": {"unreadable_files": self.hunter_unreadable,
                        "details": self.hunter_unreadable_details,
                        "retried_files": self.hunter_retried,
-                       "dropped_entries": self.hunter_dropped},
+                       "dropped_entries": self.hunter_dropped,
+                       "duplicate_entries": self.hunter_duplicates,
+                       "skipped_files": self.skipped_files},
+            "over_budget": [f.to_dict() for f in self.over_budget],
             "counts": {
                 "candidates": len(self.scanned),
                 "line_proven": len(self.line_proven),
                 "class_only": len(self.class_only),
                 "confirmed": len(self.confirmed),
                 "gated_out": len(self.gated_out),
-            "not_testable": len(self.not_testable),
+                "not_testable": len(self.not_testable),
                 "rejected": len(self.rejected),
-            "not_demonstrated": len(self.not_demonstrated),
+                "not_demonstrated": len(self.not_demonstrated),
+                "over_budget": len(self.over_budget),
                 "patched_files": len(self.patches),
                 "by_severity": self.severity_counts(),
                 "by_evidence": self.evidence_counts(),
@@ -279,11 +295,17 @@ class Scanner:
             else:
                 report.environment = Environment(image=self.validator.sandbox.image)
 
-        findings = self.hunter.hunt()[: self.max_findings]
+        # Spend the budget on the candidates the hunter believes most. Ties keep the
+        # hunter's order (the sort is stable). What does not fit is kept on the
+        # report, not silently dropped.
+        ranked = sorted(self.hunter.hunt(), key=lambda f: -f.confidence)
+        findings, report.over_budget = ranked[: self.max_findings], ranked[self.max_findings:]
         report.hunter_unreadable = list(self.hunter.unreadable_files)
         report.hunter_unreadable_details = dict(self.hunter.unreadable_details)
         report.hunter_retried = list(self.hunter.retried_files)
         report.hunter_dropped = self.hunter.dropped_entries
+        report.hunter_duplicates = getattr(self.hunter, "duplicate_entries", 0)
+        report.skipped_files = dict(getattr(self.tools, "skipped", {}))
 
         for finding in findings:
             # Confidence gate: don't spend validation on noise the hunter dismissed.

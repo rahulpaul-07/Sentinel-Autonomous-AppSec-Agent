@@ -23,3 +23,24 @@ def test_to_dict_is_json_serializable_and_complete():
     # The gated finding records why static analysis rejected it.
     gated = [s for s in d["scanned"] if s["evidence"] == "unreachable"][0]
     assert gated["reachability"]["verdict"] == "safe_usage"
+
+
+def test_candidates_over_budget_are_kept_on_the_report(monkeypatch):
+    """The budget used to slice the list and forget the rest."""
+    from sentinel.hunter import Finding
+    from sentinel.scanner import Scanner
+
+    hunted = [Finding("SQL Injection", "app.py", 30 + i, "high", "d", c)
+              for i, c in enumerate([0.2, 0.9, 0.5])]
+    monkeypatch.setattr("sentinel.hunter.Hunter.hunt", lambda self: list(hunted))
+
+    class LLM:
+        model = "stub"
+
+    scanner = Scanner(LLM(), "targets/vulnerable_app", max_findings=2)
+    report = scanner.scan(validate=False, patch=False)
+
+    assert [s.finding.confidence for s in report.scanned] == [0.9, 0.5]
+    assert [f.confidence for f in report.over_budget] == [0.2]
+    assert report.to_dict()["counts"]["over_budget"] == 1
+    assert "budget" in report.summary()

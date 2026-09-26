@@ -15,9 +15,63 @@ target. Every tool here is:
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+# Directories that hold someone else's code or generated files. Scanning them costs
+# a model call per file and reports bugs in dependencies as bugs in the target.
+IGNORE_DIRS = frozenset({
+    ".git", ".hg", ".svn", "__pycache__", "node_modules",
+    ".venv", "venv", "site-packages", "dist-packages",
+    ".tox", ".nox", ".eggs", "build", "dist",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache",
+})
+
+# A hunter prompt carries the whole file. Past this size a file is generated code
+# or data, and would blow the model's context; it is skipped and reported.
+MAX_FILE_BYTES = 256 * 1024
+
+
+def _ignored_dir(path: Path) -> bool:
+    return (path.name in IGNORE_DIRS
+            or path.name.endswith(".egg-info")
+            or (path / "pyvenv.cfg").is_file())   # a virtualenv under any name
+
+
+def discover(root: str | Path) -> tuple[list[str], dict[str, str]]:
+    """Python files to analyse under `root`, and the ones skipped with the reason.
+
+    Paths are relative to `root`, in forward-slash form, sorted. Ignore rules apply
+    to directories *inside* the target only, never to the directories above it.
+    Symlinks are never followed out of the target: a link to ~/.ssh/id_rsa named
+    app.py would otherwise have its contents sent to a third-party model.
+    """
+    base = Path(root).resolve()
+    files: list[str] = []
+    skipped: dict[str, str] = {}
+    for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
+        here = Path(dirpath)
+        dirnames[:] = sorted(d for d in dirnames if not _ignored_dir(here / d))
+        for name in sorted(filenames):
+            if not name.endswith(".py"):
+                continue
+            path = here / name
+            rel = path.relative_to(base).as_posix()
+            try:
+                real = path.resolve(strict=True)
+            except (OSError, RuntimeError):
+                skipped[rel] = "unresolvable (broken or looping symlink)"
+                continue
+            if not real.is_relative_to(base):
+                skipped[rel] = "symlink leading outside the target"
+                continue
+            if real.stat().st_size > MAX_FILE_BYTES:
+                skipped[rel] = f"larger than {MAX_FILE_BYTES // 1024} KiB"
+                continue
+            files.append(rel)
+    return sorted(files), skipped
 
 
 @dataclass
@@ -33,6 +87,7 @@ class Tools:
     def __init__(self, root: str | Path) -> None:
         # Resolve to one absolute path. Every tool is confined to here.
         self.root = Path(root).resolve()
+        self.skipped: dict[str, str] = {}
 
     def _safe_path(self, relative_path: str) -> Path:
         """Resolve a path and REFUSE anything that escapes the target root.
@@ -48,12 +103,12 @@ class Tools:
         return candidate
 
     def list_files(self) -> list[str]:
-        """List all Python files in the target, as paths relative to the root."""
-        files = []
-        for p in sorted(self.root.rglob("*.py")):
-            if "__pycache__" in p.parts or ".venv" in p.parts:
-                continue
-            files.append(str(p.relative_to(self.root)))
+        """List the Python files in the target to analyse, relative to the root.
+
+        Files left out for a reason other than being ignored dependencies are
+        recorded in `self.skipped`, so a report can say what was never read.
+        """
+        files, self.skipped = discover(self.root)
         return files
 
     def read_file(
