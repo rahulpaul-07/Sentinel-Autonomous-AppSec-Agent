@@ -94,6 +94,9 @@ class QuotaExhausted(RuntimeError):
                 f"{minutes}m {seconds}s" if minutes else f"{seconds}s")
         return f"{self.model} usage limit reached; the provider says try again in {wait}"
 
+_LITELLM_PREFIX = re.compile(r"^(?:litellm\.\w+:\s*)?(?:\w+Exception\s*-\s*)?")
+
+
 class ModelError(RuntimeError):
     """A model call failed in a way retrying will not fix, or retries ran out.
 
@@ -104,8 +107,16 @@ class ModelError(RuntimeError):
 
     def __init__(self, model: str, cause: BaseException) -> None:
         self.model = model
-        first_line = (str(cause).strip().splitlines() or [""])[0][:300]
-        super().__init__(f"{model}: {type(cause).__name__}: {first_line}")
+        self.status = getattr(cause, "status_code", None)
+        first_line = (str(cause).strip().splitlines() or [""])[0]
+        # litellm prefixes its own names ("litellm.BadRequestError: GroqException - ");
+        # what follows the last " - " is the provider's text, often empty.
+        detail = _LITELLM_PREFIX.sub("", first_line).strip()
+        status = f" (HTTP {self.status})" if self.status else ""
+        text = detail[:300] or "the provider gave no detail"
+        if self.status in (400, 401, 403) and not detail:
+            text += "; check the API key and the model name"
+        super().__init__(f"{model}: {type(cause).__name__}{status}: {text}")
 
 
 _litellm = None  # cached module handle; imported on first real use

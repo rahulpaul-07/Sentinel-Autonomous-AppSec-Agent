@@ -188,3 +188,14 @@ def test_cli_reports_a_model_error_with_its_own_exit_code(monkeypatch, capsys):
     assert scan.main(["targets/vulnerable_app", "--no-validate"]) == scan.EXIT_MODEL
     err = capsys.readouterr().err
     assert "Invalid API Key" in err and "Traceback" not in err
+
+
+def test_an_empty_provider_error_still_says_what_to_check():
+    """Regression: Groq's 400 for a truncated key surfaced as "GroqException -"."""
+    class BadRequestError(Exception):
+        status_code = 400
+
+    err = llm_mod.ModelError("groq/m", BadRequestError("litellm.BadRequestError: GroqException - "))
+    assert str(err) == ("groq/m: BadRequestError (HTTP 400): the provider gave no detail; "
+                        "check the API key and the model name")
+    assert err.status == 400
