@@ -99,41 +99,91 @@ SINKS: dict[str, set[str]] = {
     "command": {
         "os.system",
         "os.popen",
+        "os.execl", "os.execle", "os.execlp", "os.execlpe",
+        "os.execv", "os.execve", "os.execvp", "os.execvpe",
+        "os.spawnl", "os.spawnle", "os.spawnlp", "os.spawnlpe",
+        "os.spawnv", "os.spawnve", "os.spawnvp", "os.spawnvpe",
+        "os.posix_spawn", "os.posix_spawnp",
         "subprocess.run",
         "subprocess.call",
         "subprocess.Popen",
         "subprocess.check_output",
         "subprocess.check_call",
+        "subprocess.getoutput",
+        "subprocess.getstatusoutput",
         "commands.getoutput",
+        "commands.getstatusoutput",
+        "asyncio.create_subprocess_shell",
+        "asyncio.create_subprocess_exec",
+        "pty.spawn",
         "eval",
         "exec",
     },
     "path": {
         "open",
+        "io.open",
+        "codecs.open",
+        "os.open",
         "os.remove",
         "os.unlink",
         "os.rmdir",
+        "os.rename",
+        "os.replace",
+        "os.listdir",
+        "os.scandir",
+        "os.mkdir",
+        "os.makedirs",
         "shutil.copy",
+        "shutil.copy2",
+        "shutil.copyfile",
+        "shutil.copytree",
         "shutil.move",
         "shutil.rmtree",
         "send_file",
         "pathlib.Path",
+        "read_text",
+        "read_bytes",
+        "write_text",
+        "write_bytes",
     },
     "deserial": {
         "pickle.load",
         "pickle.loads",
+        "pickle.Unpickler",
+        "_pickle.loads",
+        "cPickle.loads",
         "yaml.load",
+        "yaml.load_all",
+        "yaml.unsafe_load",
+        "yaml.unsafe_load_all",
+        "marshal.load",
         "marshal.loads",
+        "dill.load",
         "dill.loads",
         "shelve.open",
         "jsonpickle.decode",
+        "joblib.load",
+        "torch.load",
+        "pandas.read_pickle",
     },
     "ssrf": {
         "requests.get",
         "requests.post",
+        "requests.put",
+        "requests.patch",
+        "requests.delete",
+        "requests.head",
+        "requests.options",
+        "requests.request",
         "urllib.request.urlopen",
         "urlopen",
         "httpx.get",
+        "httpx.post",
+        "httpx.put",
+        "httpx.patch",
+        "httpx.delete",
+        "httpx.request",
+        "httpx.stream",
     },
     "template": {"render_template_string", "Template"},
 }
@@ -211,6 +261,37 @@ def _dotted(node: ast.AST) -> str:
     return ".".join(reversed(parts))
 
 
+def _import_aliases(tree: ast.Module) -> dict[str, str]:
+    """Map each locally bound import name to what it refers to.
+
+    `from shlex import quote` binds `quote` to `shlex.quote`; so does
+    `import shlex as s` for `s.quote`. Without this, `quote(x)` from
+    `urllib.parse` and from `shlex` look identical, and only one of them keeps a
+    shell safe.
+    """
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.asname:
+                    aliases[a.asname] = a.name
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for a in node.names:
+                if a.name != "*":
+                    aliases[a.asname or a.name] = f"{node.module}.{a.name}"
+    return aliases
+
+
+def _canonical(dotted: str, aliases: dict[str, str]) -> str:
+    """Rewrite a call name's first segment through the file's imports."""
+    if not dotted:
+        return dotted
+    head, _, rest = dotted.partition(".")
+    if head in aliases:
+        return aliases[head] + ("." + rest if rest else "")
+    return dotted
+
+
 def _call_name(func: ast.AST) -> str:
     """Name a call for sink matching, including calls on a chained expression.
 
@@ -284,8 +365,19 @@ def _is_literal_class(vuln_class: str) -> bool:
 class _TaintAnalysis:
     """Intra-file taint propagation to a fixpoint."""
 
-    def __init__(self, tree: ast.Module) -> None:
+    def __init__(
+        self,
+        tree: ast.Module,
+        clean: frozenset[str] = frozenset(),
+        aliases: dict[str, str] | None = None,
+    ) -> None:
         self.tree = tree
+        # Callables whose result is NOT tainted even when their input is. Empty
+        # for the ordinary analysis; the sanitizer check reruns with a group's
+        # sanitizers here, so a value counts as neutralized only if every path
+        # to the sink passes through one.
+        self.clean = clean
+        self.aliases = aliases if aliases is not None else _import_aliases(tree)
         self.tainted: set[str] = set()
         self.origin: dict[str, str] = {}
         # Locally defined functions, so we can push taint into their parameters.
@@ -348,6 +440,8 @@ class _TaintAnalysis:
 
         # "...".format(x) / ",".join(xs) / str(x) / x.strip()
         if isinstance(node, ast.Call):
+            if self.clean and _canonical(_dotted(node.func), self.aliases) in self.clean:
+                return ""
             for a in list(node.args) + [k.value for k in node.keywords]:
                 t = self._expr_tainted(a)
                 if t:
@@ -499,24 +593,36 @@ def _literal_secret_at(tree: ast.Module, line: int) -> Reachability | None:
     return None
 
 
-# Callables that neutralize a tainted value for a given sink group.
-SANITIZERS: dict[str, set[str]] = {
-    "path": {"basename", "secure_filename", "safe_join", "resolve", "realpath"},
-    "command": {"quote", "shlex.quote", "list2cmdline"},
-    "sql": {"quote_ident", "escape_string"},
+# Callables that neutralize a tainted value for a given sink group, by fully
+# qualified name after import resolution. Deliberately short. Absent on purpose:
+#   * os.path.realpath / Path.resolve -- they canonicalize a path, they do not
+#     confine it. `open(realpath(join(BASE, user)))` still reads /etc/passwd.
+#   * urllib.parse.quote -- URL encoding, not shell quoting.
+#   * subprocess.list2cmdline -- Windows argv quoting, not a POSIX shell's.
+#   * SQL "escape" helpers -- charset-dependent; parameterization is the fix.
+SANITIZERS: dict[str, frozenset[str]] = {
+    "path": frozenset({
+        "os.path.basename", "posixpath.basename", "ntpath.basename",
+        "werkzeug.utils.secure_filename", "werkzeug.security.safe_join",
+        "flask.safe_join", "flask.helpers.safe_join",
+    }),
+    "command": frozenset({"shlex.quote", "pipes.quote"}),
 }
 
+# argv[0] values that turn an argument vector back into a shell command line.
+_SHELLS = {"sh", "bash", "dash", "zsh", "ksh", "csh", "tcsh", "fish", "busybox",
+           "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe"}
 
-def _is_sanitized(node: ast.AST, group_key: str) -> str:
-    """Is this argument passed through a known neutralizing call?"""
-    names = SANITIZERS.get(group_key, set())
-    for sub in ast.walk(node):
-        if isinstance(sub, ast.Call):
-            dotted = _dotted(sub.func)
-            tail = dotted.rsplit(".", 1)[-1] if dotted else ""
-            if tail in names or dotted in names:
-                return dotted or tail
-    return ""
+_SAFE_YAML_LOADERS = {"SafeLoader", "CSafeLoader", "BaseLoader", "CBaseLoader"}
+
+
+def _runs_a_shell(argv: ast.List | ast.Tuple) -> bool:
+    if not argv.elts:
+        return False
+    first = argv.elts[0]
+    if not isinstance(first, ast.Constant) or not isinstance(first.value, str):
+        return True  # an attacker-chosen program is not "no shell"
+    return first.value.replace("\\", "/").rsplit("/", 1)[-1].lower() in _SHELLS
 
 
 def _safe_usage(call: ast.Call, group_key: str, name: str) -> str:
@@ -541,22 +647,30 @@ def _safe_usage(call: ast.Call, group_key: str, name: str) -> str:
                     "(parameterized query)"
                 )
 
-    # subprocess with an argument list and no shell=True
-    if group_key == "command" and call.args:
-        shell_true = any(
-            kw.arg == "shell"
-            and isinstance(kw.value, ast.Constant)
-            and kw.value.value is True
-            for kw in call.keywords
+    # subprocess with an argument vector and provably no shell. `shell=flag` is
+    # not provably False, and ["sh", "-c", user] is a shell however it is passed.
+    if (group_key == "command" and call.args and name.startswith("subprocess.")
+            and isinstance(call.args[0], (ast.List, ast.Tuple))):
+        shell_off = all(
+            isinstance(kw.value, ast.Constant) and kw.value.value is False
+            for kw in call.keywords if kw.arg == "shell"
         )
-        if not shell_true and isinstance(call.args[0], (ast.List, ast.Tuple)):
+        if shell_off and not _runs_a_shell(call.args[0]):
             return "argument vector passed without a shell (shell=False)"
 
-    # Sanitizer applied to the tainted argument
-    for arg in list(call.args) + [k.value for k in call.keywords]:
-        san = _is_sanitized(arg, group_key)
-        if san:
-            return f"input is neutralized by `{san}()` before reaching `{name}`"
+    # yaml with a loader that only builds plain data, torch with weights_only.
+    if group_key == "deserial":
+        tail = name.rsplit(".", 1)[-1]
+        if tail in ("load", "load_all") and "yaml" in name:
+            loader = call.args[1] if len(call.args) > 1 else next(
+                (k.value for k in call.keywords if k.arg == "Loader"), None)
+            if loader is not None and _dotted(loader).rsplit(".", 1)[-1] in _SAFE_YAML_LOADERS:
+                return "yaml loader restricted to plain data (SafeLoader)"
+        if tail == "load" and "torch" in name and any(
+            k.arg == "weights_only" and isinstance(k.value, ast.Constant)
+            and k.value.value is True for k in call.keywords
+        ):
+            return "torch.load with weights_only=True"
 
     return ""
 
@@ -608,11 +722,26 @@ def analyze(source: str, vuln_class: str, line: int) -> Reachability:
             f"no sink model for class '{vuln_class}'; gate skipped",
         )
 
-    analysis = _TaintAnalysis(tree)
-    # Seed: Flask view parameters are URL-controlled.
-    for p in _flask_route_params(tree):
-        analysis._mark(p, "URL route parameter")
-    analysis.run()
+    aliases = _import_aliases(tree)
+    route_params = _flask_route_params(tree)
+
+    def taint(clean: frozenset[str] = frozenset()) -> _TaintAnalysis:
+        a = _TaintAnalysis(tree, clean=clean, aliases=aliases)
+        # Seed: Flask view parameters are URL-controlled.
+        for p in route_params:
+            a._mark(p, "URL route parameter")
+        a.run()
+        return a
+
+    analysis = taint()
+    gkey = _group_key(vuln_class)
+    # The same analysis with this class's sanitizers treated as clean. A call is
+    # sanitized only if its arguments are tainted here in NEITHER sense -- that is,
+    # every tainted path into it went through a sanitizer. Checking whether a
+    # sanitizer merely appears somewhere in the arguments let
+    # `f"ls {quote(a)} {b}"` pass as safe.
+    sanitizers = SANITIZERS.get(gkey, frozenset())
+    sanitized = taint(sanitizers) if sanitizers else None
 
     # Find sink calls at or near the reported line.
     near: list[tuple[ast.Call, str]] = []
@@ -620,7 +749,7 @@ def analyze(source: str, vuln_class: str, line: int) -> Reachability:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        dotted = _call_name(node.func)
+        dotted = _canonical(_call_name(node.func), aliases)
         hit = _matches(dotted, sinks)
         if not hit:
             continue
@@ -630,6 +759,23 @@ def analyze(source: str, vuln_class: str, line: int) -> Reachability:
 
     candidates = near or []
     if not candidates:
+        # No sink we model is near the line. That is evidence only if nothing near
+        # the line takes attacker data either: the catalogue is finite, and a call
+        # it does not list is ignorance, not absence.
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call)
+                    and abs(getattr(node, "lineno", -999) - line) <= LINE_TOLERANCE):
+                why = next((w for a in list(node.args) + [k.value for k in node.keywords]
+                            if (w := analysis._expr_tainted(a))), "")
+                name = _canonical(_call_name(node.func), aliases) or "a call"
+                if why:
+                    return Reachability(
+                        Verdict.NOT_ANALYZABLE,
+                        f"attacker-controlled data ({why}) reaches `{name}` at line "
+                        f"{node.lineno}, which has no {vuln_class} sink model; "
+                        "gate skipped",
+                        sink=name,
+                    )
         if not anywhere:
             return Reachability(
                 Verdict.NO_SINK_AT_LINE,
@@ -640,7 +786,6 @@ def analyze(source: str, vuln_class: str, line: int) -> Reachability:
             f"no {vuln_class} sink call within {LINE_TOLERANCE} lines of line {line}",
         )
 
-    gkey = _group_key(vuln_class)
     safe_reasons: list[str] = []
     unresolved: list[str] = []
 
@@ -658,6 +803,11 @@ def analyze(source: str, vuln_class: str, line: int) -> Reachability:
 
         # Data arrives -- but is the call made safely?
         safe = _safe_usage(call, gkey, name)
+        if not safe and sanitized is not None and not any(
+            sanitized._expr_tainted(a) for a in list(call.args) + [k.value for k in call.keywords]
+        ):
+            safe = (f"every attacker-controlled value reaching `{name}` passes through "
+                    f"a sanitizer ({', '.join(sorted(sanitizers))})")
         if safe:
             safe_reasons.append(f"`{name}` at line {call.lineno}: {safe}")
             continue

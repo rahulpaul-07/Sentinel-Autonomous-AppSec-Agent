@@ -256,3 +256,115 @@ def other(extra):
 '''
     r = analyze(src, "Command Injection", 5)
     assert not r.blocks, r.reason
+
+
+# --- rejections that were unsound -----------------------------------------------
+#
+# Each of these is a real vulnerability the gate used to reject before any
+# exploit was attempted -- the one failure its fail-open contract forbids.
+
+REAL_BUGS_ONCE_REJECTED = {
+    # realpath canonicalizes; it does not confine the path to BASE.
+    "realpath-is-not-containment": ('''
+import os
+from flask import request
+BASE = "/srv/files"
+def dl():
+    name = request.args.get("f")
+    return open(os.path.realpath(os.path.join(BASE, name))).read()
+''', "Path Traversal", 7),
+    # A sanitizer on one value says nothing about the other.
+    "quote-on-one-argument-only": ('''
+import subprocess, shlex
+from flask import request
+def run():
+    a = request.args.get("a"); b = request.args.get("b")
+    subprocess.run(f"ls {shlex.quote(a)} {b}", shell=True)
+''', "Command Injection", 6),
+    # URL quoting is not shell quoting, even when both are called `quote`.
+    "urllib-quote-is-not-shlex-quote": ('''
+import os
+from urllib.parse import quote
+from flask import request
+def run():
+    os.system("curl " + quote(request.args.get("u"), safe=";|&$ "))
+''', "Command Injection", 6),
+    # An argument vector whose program is a shell is a shell command line.
+    "argv-list-through-sh-c": ('''
+import subprocess
+from flask import request
+def run():
+    cmd = request.args.get("c")
+    subprocess.run(["sh", "-c", cmd])
+''', "Command Injection", 6),
+    # shell=flag is not provably shell=False.
+    "shell-from-a-variable": ('''
+import subprocess
+from flask import request
+USE_SHELL = True
+def run():
+    subprocess.run([request.args.get("c")], shell=USE_SHELL)
+''', "Command Injection", 6),
+    # A sink the catalogue lacked was reported as "no sink".
+    "subprocess-getoutput": ('''
+import subprocess
+from flask import request
+def run():
+    host = request.args.get("h")
+    return subprocess.getoutput("ping -c 1 " + host)
+''', "Command Injection", 6),
+    # Imported under its bare name.
+    "from-import-of-a-sink": ('''
+from os import system
+from flask import request
+def run():
+    system("ping " + request.args.get("h"))
+''', "Command Injection", 5),
+    # A call no catalogue lists, receiving attacker data, is not evidence of absence.
+    "unmodelled-call-with-tainted-data": ('''
+from flask import request
+import mylib
+def run():
+    mylib.shell_out("ping " + request.args.get("h"))
+''', "Command Injection", 5),
+}
+
+
+@pytest.mark.parametrize("src,cls,line", REAL_BUGS_ONCE_REJECTED.values(),
+                         ids=REAL_BUGS_ONCE_REJECTED.keys())
+def test_real_bug_is_never_rejected(src, cls, line):
+    r = analyze(src, cls, line)
+    assert not r.blocks, f"{r.verdict.value}: {r.reason}"
+
+
+def test_quote_that_covers_every_tainted_value_is_safe():
+    """The sanitizer rule still rejects when it genuinely applies, through a variable."""
+    src = '''
+import os, shlex
+from flask import request
+def run():
+    safe = shlex.quote(request.args.get("h"))
+    os.system("ping -c 1 " + safe)
+'''
+    r = analyze(src, "Command Injection", 6)
+    assert r.verdict is Verdict.SAFE_USAGE, r.reason
+
+
+def test_yaml_safe_loader_is_safe_usage():
+    src = '''
+import yaml
+from flask import request
+def load():
+    return yaml.load(request.data, Loader=yaml.SafeLoader)
+'''
+    assert analyze(src, "Insecure Deserialization", 5).verdict is Verdict.SAFE_USAGE
+
+
+def test_yaml_default_loader_is_reachable():
+    src = '''
+import yaml
+from flask import request
+def load():
+    return yaml.load(request.data, Loader=yaml.Loader)
+'''
+    assert analyze(src, "Insecure Deserialization", 5).verdict is Verdict.REACHABLE
