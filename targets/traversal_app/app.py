@@ -1,7 +1,7 @@
 """
-targets/traversal_app/app.py
-----------------------------
-Intentionally vulnerable: path traversal. For benchmark use only.
+Benchmark fixture for Sentinel's evaluation. Do not deploy.
+Its labels live in ground_truth.json, never in this file, so the
+model under test cannot read the answers. Keep line numbers stable.
 """
 
 import os
@@ -17,8 +17,8 @@ BASE_DIR = "/var/www/files"
 def download():
     filename = request.args.get("file", "")
 
-    # VULN (path traversal): 'filename' is joined without checking for '..', so
-    # an attacker can request  ?file=../../etc/passwd  to read any file on disk.
+
+
     path = os.path.join(BASE_DIR, filename)
     with open(path) as handle:
         return handle.read()

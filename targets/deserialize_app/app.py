@@ -1,7 +1,7 @@
 """
-targets/deserialize_app/app.py
-------------------------------
-Intentionally vulnerable: insecure deserialization. For benchmark use only.
+Benchmark fixture for Sentinel's evaluation. Do not deploy.
+Its labels live in ground_truth.json, never in this file, so the
+model under test cannot read the answers. Keep line numbers stable.
 """
 
 import base64
@@ -16,8 +16,8 @@ app = Flask(__name__)
 def load():
     blob = request.args.get("data", "")
 
-    # VULN (insecure deserialization): pickle.loads on attacker-controlled bytes
-    # lets an attacker run arbitrary code via a crafted pickle payload.
+
+
     raw = base64.b64decode(blob)
     obj = pickle.loads(raw)
     return str(obj)
