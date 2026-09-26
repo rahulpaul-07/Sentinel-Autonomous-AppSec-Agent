@@ -1,0 +1,402 @@
+{
+  "started_at": "2026-09-26T16:30:35+00:00",
+  "model": "groq/openai/gpt-oss-120b",
+  "sentinel": {
+    "commit": "a332400e5217350ea23edfb56ad9f5b734604dcc",
+    "dirty": false
+  },
+  "build_env": true,
+  "targets": [
+    "targets/vulnerable_app",
+    "targets/safe_app",
+    "targets/traversal_app",
+    "targets/deserialize_app"
+  ],
+  "runs_requested": 3,
+  "runs": [
+    {
+      "started_at": "2026-09-26T16:30:35+00:00",
+      "tokens": {
+        "calls": 14,
+        "prompt_tokens": 9971,
+        "completion_tokens": 9129,
+        "total_tokens": 19100
+      },
+      "strict": {
+        "tp": 4,
+        "fp": 1,
+        "fn": 1,
+        "precision": 0.8,
+        "recall": 0.8,
+        "f1": 0.8
+      },
+      "permissive": {
+        "tp": 5,
+        "fp": 1,
+        "fn": 0,
+        "precision": 0.8333,
+        "recall": 1.0,
+        "f1": 0.9091
+      },
+      "tiers": {
+        "line_proven": 5,
+        "class_only": 1,
+        "unreachable": 1
+      },
+      "targets": [
+        {
+          "target": "targets/vulnerable_app",
+          "tiers": {
+            "line_proven": 2,
+            "class_only": 1
+          },
+          "environment": {
+            "image": "sentinel-env:bb86bd8c197a",
+            "source": "requirements.txt",
+            "requirements": [
+              "flask==3.1.3"
+            ],
+            "skipped": [],
+            "status": "cached",
+            "error": ""
+          },
+          "hunter": {
+            "unreadable_files": [],
+            "details": {},
+            "retried_files": [],
+            "dropped_entries": 0
+          }
+        },
+        {
+          "target": "targets/safe_app",
+          "tiers": {
+            "unreachable": 1,
+            "line_proven": 1
+          },
+          "environment": {
+            "image": "sentinel-env:bb86bd8c197a",
+            "source": "requirements.txt",
+            "requirements": [
+              "flask==3.1.3"
+            ],
+            "skipped": [],
+            "status": "cached",
+            "error": ""
+          },
+          "hunter": {
+            "unreadable_files": [],
+            "details": {},
+            "retried_files": [
+              "app.py"
+            ],
+            "dropped_entries": 0
+          }
+        },
+        {
+          "target": "targets/traversal_app",
+          "tiers": {
+            "line_proven": 1
+          },
+          "environment": {
+            "image": "sentinel-env:bb86bd8c197a",
+            "source": "requirements.txt",
+            "requirements": [
+              "flask==3.1.3"
+            ],
+            "skipped": [],
+            "status": "cached",
+            "error": ""
+          },
+          "hunter": {
+            "unreadable_files": [],
+            "details": {},
+            "retried_files": [],
+            "dropped_entries": 0
+          }
+        },
+        {
+          "target": "targets/deserialize_app",
+          "tiers": {
+            "line_proven": 1
+          },
+          "environment": {
+            "image": "sentinel-env:bb86bd8c197a",
+            "source": "requirements.txt",
+            "requirements": [
+              "flask==3.1.3"
+            ],
+            "skipped": [],
+            "status": "cached",
+            "error": ""
+          },
+          "hunter": {
+            "unreadable_files": [],
+            "details": {},
+            "retried_files": [],
+            "dropped_entries": 0
+          }
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "started_at": "2026-09-26T16:32:05+00:00",
+      "tokens": {
+        "calls": 12,
+        "prompt_tokens": 8833,
+        "completion_tokens": 7806,
+        "total_tokens": 16639
+      },
+      "strict": {
+        "tp": 3,
+        "fp": 1,
+        "fn": 2,
+        "precision": 0.75,
+        "recall": 0.6,
+        "f1": 0.6667
+      },
+      "permissive": {
+        "tp": 4,
+        "fp": 1,
+        "fn": 1,
+        "precision": 0.8,
+        "recall": 0.8,
+        "f1": 0.8
+      },
+      "tiers": {
+        "class_only": 1,
+        "line_proven": 4,
+        "unreachable": 1
+      },
+      "targets": [
+        {
+          "target": "targets/vulnerable_app",
+          "tiers": {
+            "class_only": 1,
+            "line_proven": 2
+          },
+          "environment": {
+            "image": "sentinel-env:bb86bd8c197a",
+            "source": "requirements.txt",
+            "requirements": [
+              "flask==3.1.3"
+            ],
+            "skipped": [],
+            "status": "cached",
+            "error": ""
+          },
+          "hunter": {
+            "unreadable_files": [],
+            "details": {},
+            "retried_files": [],
+            "dropped_entries": 0
+          }
+        },
+        {
+          "target": "targets/safe_app",
+          "tiers": {
+            "unreachable": 1,
+            "line_proven": 1
+          },
+          "environment": {
+            "image": "sentinel-env:bb86bd8c197a",
+            "source": "requirements.txt",
+            "requirements": [
+              "flask==3.1.3"
+            ],
+            "skipped": [],
+            "status": "cached",
+            "error": ""
+          },
+          "hunter": {
+            "unreadable_files": [],
+            "details": {},
+            "retried_files": [],
+            "dropped_entries": 0
+          }
+        },
+        {
+          "target": "targets/traversal_app",
+          "tiers": {},
+          "environment": {
+            "image": "sentinel-env:bb86bd8c197a",
+            "source": "requirements.txt",
+            "requirements": [
+              "flask==3.1.3"
+            ],
+            "skipped": [],
+            "status": "cached",
+            "error": ""
+          },
+          "hunter": {
+            "unreadable_files": [
+              "app.py"
+            ],
+            "details": {
+              "app.py": {
+                "reply_chars": 270,
+                "finish_reason": "stop",
+                "parse_error": "invalid JSON: Expecting ',' delimiter: line 1 column 269 (char 268)",
+                "attempts": 2,
+                "reply": "{\"findings\": [{\"vuln_class\": \"Path Traversal\", \"line\": 23, \"severity\": \"high\", \"description\": \"The 'file' query parameter is joined with BASE_DIR and used directly in open(), enabling an attacker to traverse directories and read arbitrary files.\", \"confidence\": 0.95}]]}"
+              }
+            },
+            "retried_files": [],
+            "dropped_entries": 0
+          }
+        },
+        {
+          "target": "targets/deserialize_app",
+          "tiers": {
+            "line_proven": 1
+          },
+          "environment": {
+            "image": "sentinel-env:bb86bd8c197a",
+            "source": "requirements.txt",
+            "requirements": [
+              "flask==3.1.3"
+            ],
+            "skipped": [],
+            "status": "cached",
+            "error": ""
+          },
+          "hunter": {
+            "unreadable_files": [],
+            "details": {},
+            "retried_files": [],
+            "dropped_entries": 0
+          }
+        }
+      ],
+      "warnings": [
+        "targets/traversal_app: hunter reply unreadable for app.py (270 chars: invalid JSON: Expecting ',' delimiter: line 1 column 269 (char 268), finish_reason=stop, 2 attempts); not analysed"
+      ]
+    },
+    {
+      "started_at": "2026-09-26T16:34:08+00:00",
+      "tokens": {
+        "calls": 14,
+        "prompt_tokens": 10375,
+        "completion_tokens": 11092,
+        "total_tokens": 21467
+      },
+      "strict": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 2,
+        "precision": 1.0,
+        "recall": 0.6,
+        "f1": 0.75
+      },
+      "permissive": {
+        "tp": 4,
+        "fp": 0,
+        "fn": 1,
+        "precision": 1.0,
+        "recall": 0.8,
+        "f1": 0.8889
+      },
+      "tiers": {
+        "line_proven": 3,
+        "class_only": 1,
+        "unreachable": 1,
+        "unproven": 2
+      },
+      "targets": [
+        {
+          "target": "targets/vulnerable_app",
+          "tiers": {
+            "line_proven": 2,
+            "class_only": 1
+          },
+          "environment": {
+            "image": "sentinel-env:bb86bd8c197a",
+            "source": "requirements.txt",
+            "requirements": [
+              "flask==3.1.3"
+            ],
+            "skipped": [],
+            "status": "cached",
+            "error": ""
+          },
+          "hunter": {
+            "unreadable_files": [],
+            "details": {},
+            "retried_files": [],
+            "dropped_entries": 0
+          }
+        },
+        {
+          "target": "targets/safe_app",
+          "tiers": {
+            "unreachable": 1,
+            "unproven": 1
+          },
+          "environment": {
+            "image": "sentinel-env:bb86bd8c197a",
+            "source": "requirements.txt",
+            "requirements": [
+              "flask==3.1.3"
+            ],
+            "skipped": [],
+            "status": "cached",
+            "error": ""
+          },
+          "hunter": {
+            "unreadable_files": [],
+            "details": {},
+            "retried_files": [],
+            "dropped_entries": 0
+          }
+        },
+        {
+          "target": "targets/traversal_app",
+          "tiers": {
+            "unproven": 1
+          },
+          "environment": {
+            "image": "sentinel-env:bb86bd8c197a",
+            "source": "requirements.txt",
+            "requirements": [
+              "flask==3.1.3"
+            ],
+            "skipped": [],
+            "status": "cached",
+            "error": ""
+          },
+          "hunter": {
+            "unreadable_files": [],
+            "details": {},
+            "retried_files": [],
+            "dropped_entries": 0
+          }
+        },
+        {
+          "target": "targets/deserialize_app",
+          "tiers": {
+            "line_proven": 1
+          },
+          "environment": {
+            "image": "sentinel-env:bb86bd8c197a",
+            "source": "requirements.txt",
+            "requirements": [
+              "flask==3.1.3"
+            ],
+            "skipped": [],
+            "status": "cached",
+            "error": ""
+          },
+          "hunter": {
+            "unreadable_files": [],
+            "details": {},
+            "retried_files": [],
+            "dropped_entries": 0
+          }
+        }
+      ],
+      "warnings": []
+    }
+  ],
+  "complete": true,
+  "stopped": null
+}

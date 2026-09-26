@@ -49,8 +49,10 @@ fails when it is reverted.
 - Applying a fix keeps the file's line endings.
 - Candidates past the `--max-findings` budget are kept on the report, highest
   confidence graded first.
-- Benchmark targets no longer carry answer-key comments. **Published results predate
-  this and need re-measuring.**
+- Benchmark targets no longer carry answer-key comments. Re-measured on 26 September
+  2026 (`benchmarks/results/2026-09-26-eval-gpt-oss-120b.json`): strict recall 60–80%,
+  strict precision 75–100%, with one false proof on the clean control in two of three
+  runs -- an exploit that rigged its environment and printed the marker itself. Open.
 - The project page was rebuilt without template components or third-party requests.
 
 ### Fixed

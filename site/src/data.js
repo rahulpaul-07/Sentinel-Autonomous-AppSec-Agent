@@ -4,15 +4,19 @@
 // fixture, and the page labels them as such where they appear.
 
 export const REPO = "https://github.com/rahulpaul-07/Sentinel-Autonomous-AppSec-Agent";
-export const RESULTS_FILE = `${REPO}/blob/master/benchmarks/results/2026-09-24-eval-gpt-oss-120b.json`;
+export const RESULTS_FILE = `${REPO}/blob/master/benchmarks/results/2026-09-26-eval-gpt-oss-120b.json`;
+export const PRE_AUDIT_FILE = `${REPO}/blob/master/benchmarks/results/2026-09-24-eval-gpt-oss-120b.json`;
 
-// benchmarks/results/2026-09-24-eval-gpt-oss-120b.json -- commit 6a2b78d,
-// groq/openai/gpt-oss-120b, three runs, dependency images, network off.
+// benchmarks/results/2026-09-26-eval-gpt-oss-120b.json -- commit a332400 (after the
+// audit, answer-key comments removed), groq/openai/gpt-oss-120b, three runs,
+// dependency images, network off.
 export const CURRENT_RUNS = [
-  { run: 1, strict: "60%", strictN: "3 of 5", permissive: "80%", permissiveN: "4 of 5", fp: 0,
+  { run: 1, strict: "80%", strictN: "4 of 5", precision: "80%", fp: 1,
+    note: "false proof on the clean control" },
+  { run: 2, strict: "60%", strictN: "3 of 5", precision: "75%", fp: 1,
+    note: "false proof on the clean control; traversal file not analysed (malformed reply)" },
+  { run: 3, strict: "60%", strictN: "3 of 5", precision: "100%", fp: 0,
     note: "the path-traversal exploit ran and failed" },
-  { run: 2, strict: "80%", strictN: "4 of 5", permissive: "100%", permissiveN: "5 of 5", fp: 0, note: "" },
-  { run: 3, strict: "80%", strictN: "4 of 5", permissive: "100%", permissiveN: "5 of 5", fp: 0, note: "" },
 ];
 
 // August 2026, v1 validator: exploits did not import the target, so every
@@ -122,6 +126,7 @@ export const AUDIT = [
 ];
 
 export const LIMITS = [
+  "The success marker is printed by the exploit. The tracer proves the accused line ran, not that the attack worked, so an exploit that rigs its sandbox environment can declare success. It happened on the clean control on 26 September; refusing environment tampering and treating SSRF as untestable without a network are next.",
   "The tracer records that a line executed, not that attacker data flowed through it. With the taint gate this is strong evidence; it is not a dataflow proof.",
   "The tracer runs in the exploit's own interpreter. The integrity checks stop accidental and naively injected forgery, not an exploit engineered to evade them; tracing from outside the process would.",
   "Prompt fencing lowers the odds of injection but cannot remove them. An injected finding still has to be proven; an injected \"report nothing\" is the residual risk.",

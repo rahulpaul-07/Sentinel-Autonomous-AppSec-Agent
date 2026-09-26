@@ -5,7 +5,7 @@ import { ProofLab } from "@/components/proof-lab";
 import { cn } from "@/lib";
 import {
   AUDIT, CI_SNIPPET, CONTROLS, CURRENT_RUNS, GATE, LIMITS, PIPELINE, REPO,
-  RESULTS_FILE, TIERS, V1_RUNS,
+  PRE_AUDIT_FILE, RESULTS_FILE, TIERS, V1_RUNS,
 } from "./data";
 
 /* ------------------------------------------------------------------ shell */
@@ -312,37 +312,40 @@ function Hardening() {
 function Results() {
   return (
     <Section id="results" n="04" label="Results"
-      title="Measured, with the caveats that come with it."
-      lede="Three runs of the current pipeline with gpt-oss-120b, on four targets holding five labelled bugs and a clean control, exploits running in each target's dependency image with the network off.">
-      <div className="mt-8 border border-l-4 border-rule border-l-warn bg-panel p-5 text-[15px] leading-[1.6] text-body">
-        <strong className="font-semibold text-ink">Re-measurement pending.</strong> These runs predate the
-        September 2026 audit. The benchmark targets then carried comments naming each bug, which the model
-        could read, and the gate and witness fixes change grading. Treat the figures as history until the
-        next run lands in <code className="font-mono text-[13.5px]">benchmarks/results/</code>.
-      </div>
-
-      <Table head={["Run", "Strict recall · line proven", "Permissive recall · marker", "False positives", "Note"]} min={680}>
+      title="Measured after the audit, including what went wrong."
+      lede="Three runs on 26 September 2026 with gpt-oss-120b, after the audit and with the answer-key comments removed: four targets holding five labelled bugs and a clean control, exploits running in each target's dependency image with the network off.">
+      <Table head={["Run", "Strict recall · line proven", "Strict precision", "False proofs", "Note"]} min={680}>
         {CURRENT_RUNS.map((r) => (
-          <tr key={r.run}>
+          <tr key={r.run} className="align-top">
             <td className="px-4 py-3 font-mono text-muted">{r.run}</td>
             <td className="px-4 py-3"><span className="text-[17px] font-semibold text-ink">{r.strict}</span> <span className="text-muted">({r.strictN})</span></td>
-            <td className="px-4 py-3"><span className="text-[17px] font-semibold text-ink">{r.permissive}</span> <span className="text-muted">({r.permissiveN})</span></td>
-            <td className="px-4 py-3 font-mono text-ink">{r.fp}</td>
+            <td className="px-4 py-3"><span className="text-[17px] font-semibold text-ink">{r.precision}</span></td>
+            <td className={cn("px-4 py-3 font-mono", r.fp ? "text-sev" : "text-ink")}>{r.fp}</td>
             <td className="px-4 py-3 text-muted">{r.note}</td>
           </tr>
         ))}
       </Table>
 
+      <div className="mt-8 border border-l-4 border-rule border-l-sev bg-panel p-5 text-[15px] leading-[1.6] text-body">
+        <strong className="font-semibold text-ink">A false proof on the clean control.</strong> In two runs the
+        model claimed SSRF on the control&rsquo;s <code className="font-mono text-[13.5px]">ping</code> route. The gate
+        has no SSRF model for a subprocess call, so it failed open as designed; the exploit then rigged the
+        sandbox environment so the route looked exploited, ran the accused line, and printed the marker
+        itself. The tracer confirmed the line ran, so it was graded line proven. The marker is the
+        exploit&rsquo;s own word; closing that gap is the next change.
+      </div>
+
       <div className="mt-8 grid gap-6 text-[15px] leading-[1.65] text-body md:grid-cols-2">
         <p>
-          <strong className="font-semibold text-ink">Strict recall cannot exceed 80% here.</strong> The
-          hardcoded secret sits on a module-level line that runs only on import, and import-time
-          execution is never counted. That one finding is the whole gap between the two readings in every run.
+          <strong className="font-semibold text-ink">Recall held with the hints gone.</strong> SQL injection,
+          command injection and deserialization were line-proven in every run. Strict recall cannot exceed
+          80% here: the hardcoded secret is a module-level line that execution cannot prove.
         </p>
         <p>
-          <strong className="font-semibold text-ink">There is no precision figure.</strong> Three or four
-          findings were line-proven per run, too few to divide by, and the clean control was only
-          analysed in one run: in the other two the model&rsquo;s reply could not be parsed.{" "}
+          <strong className="font-semibold text-ink">Small numbers.</strong> Four or five findings were
+          line-proven per run, so one false proof moves precision by 20 points. Before the audit, with the
+          hints visible, the same model scored 60&ndash;80% (
+          <a href={PRE_AUDIT_FILE} className="text-ink underline" target="_blank" rel="noopener noreferrer">record</a>).{" "}
           <a href={RESULTS_FILE} className="text-ink underline" target="_blank" rel="noopener noreferrer">Unedited results file</a>.
         </p>
       </div>

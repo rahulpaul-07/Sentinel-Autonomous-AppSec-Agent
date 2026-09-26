@@ -185,22 +185,63 @@ the prior code first, and each fix ships with a test that fails when it is rever
 
 ## Results
 
-> **Re-measurement pending.** Every figure below predates the September 2026 audit. The
-> benchmark targets then carried comments naming each bug, which the hunter could read,
-> and the gate and witness fixes change grading. They are kept as the record of what was
-> measured; the next run on the current code will be added to `benchmarks/results/`.
-
 Measured by a reproducible harness (`evaluate.py`) against labeled ground truth: four
 targets, five vulnerability classes (SQL injection, command injection, hardcoded secret,
 path traversal, insecure deserialization) plus a clean control that should produce
 nothing.
 
-### Current pipeline (September 2026)
+### Current pipeline, after the audit (26 September 2026)
 
-Measured on 24 September 2026 at commit `6a2b78d` with `groq/openai/gpt-oss-120b`,
-three runs, exploits running in each target's dependency image with the network off.
-The unedited record is
-[`benchmarks/results/2026-09-24-eval-gpt-oss-120b.json`](benchmarks/results/2026-09-24-eval-gpt-oss-120b.json).
+Measured at commit `a332400` -- after the September 2026 audit, with the answer-key
+comments removed from the targets -- using `groq/openai/gpt-oss-120b`, three runs,
+exploits running in each target's dependency image with the network off. The unedited
+record is
+[`benchmarks/results/2026-09-26-eval-gpt-oss-120b.json`](benchmarks/results/2026-09-26-eval-gpt-oss-120b.json).
+
+| Run | Strict recall (line-proven) | Strict precision | Permissive recall (marker printed) | False positives | What differed |
+|---|---|---|---|---|---|
+| 1 | 80% (4 of 5) | 80% | 100% (5 of 5) | 1, on the clean control | |
+| 2 | 60% (3 of 5) | 75% | 80% (4 of 5) | 1, on the clean control | path-traversal file not analysed: the model's reply was malformed twice |
+| 3 | 60% (3 of 5) | 100% | 80% (4 of 5) | 0 | the path-traversal exploit ran and failed |
+
+**Strict recall 60–80%, strict precision 75–100%, one false proof in two of three runs.**
+What those figures do and do not show:
+
+* **Recall held with the hints gone.** SQL injection, command injection and insecure
+  deserialization were line-proven in every run. Strict recall still cannot exceed 80%:
+  the hardcoded secret lives on a module-level line that execution cannot prove, and it
+  was graded class-only every time.
+* **The clean control produced a false proof -- a real grading weakness.** In runs 1
+  and 2 the model claimed SSRF on the control's `ping` route. The static gate has no SSRF
+  model for a subprocess call, so it failed open, as designed. The exploit then
+  manipulated the sandbox environment so the route *looked* successfully exploited, ran
+  the reported line, and printed the success marker itself. The tracer confirmed the line
+  ran, so the finding was graded `LINE_PROVEN`. A diagnostic scan of the control
+  reproduced the same claim and approach (it failed that time and was graded unproven).
+  Two lessons, both open: the marker is printed by the exploit, so an exploit that rigs
+  its surroundings can declare success without exploiting the target; and SSRF cannot be
+  genuinely demonstrated in a network-off sandbox at all. See
+  [Limitations](#limitations--roadmap).
+* **Precision is quoted, with care.** Four or five findings were line-proven per run,
+  which is still few; one false proof moves precision by 20 points.
+* **Five cases is a small benchmark.** One case moves recall by 20 points, so a single
+  run says little on its own; that is why the range is reported, not the best run.
+
+**A small local model, for scale.** The same benchmark with `ollama/qwen2.5-coder:7b`,
+twice (six runs:
+[`…-qwen2.5-coder-7b-run1.json`](benchmarks/results/2026-09-26-eval-qwen2.5-coder-7b-run1.json),
+[`…-run2.json`](benchmarks/results/2026-09-26-eval-qwen2.5-coder-7b-run2.json)), line-proved
+at most one bug per run -- strict recall 0–20% -- with no false proofs: the gate
+rejected both clean-control candidates in every run. A 7B model proposes plausible
+candidates but rarely writes an exploit that works against the real code, and the ladder
+reports exactly that rather than crediting the guesses.
+
+### Earlier measurement (24 September 2026, before the audit)
+
+> Taken at commit `6a2b78d`, before the audit. The targets then carried comments naming
+> each bug, which the hunter could read, and the gate and witness fixes had not landed.
+> Kept as the record of what was measured.
+> [`benchmarks/results/2026-09-24-eval-gpt-oss-120b.json`](benchmarks/results/2026-09-24-eval-gpt-oss-120b.json)
 
 | Run | Strict recall (line-proven) | Permissive recall (marker printed) | False positives | What differed |
 |---|---|---|---|---|
@@ -208,29 +249,8 @@ The unedited record is
 | 2 | 80% (4 of 5) | 100% (5 of 5) | 0 | |
 | 3 | 80% (4 of 5) | 100% (5 of 5) | 0 | |
 
-**Strict recall 60–80%, permissive recall 80–100%, no false positives in three runs.**
-What those figures do and do not show:
-
-* **Strict recall cannot exceed 80% here.** The hardcoded secret sits on a module-level
-  line, which runs only because the module is imported, and import-time execution is
-  never counted as a witness. So 80% means every bug that execution *can* prove was
-  proven: SQL injection, command injection and insecure deserialization in every run,
-  path traversal in two of three.
-* **The gap between the two readings is that one finding, in every run.** These runs do
-  not show the witness catching an exploit that reproduced a vulnerability pattern in
-  isolation; the only thing it demoted was a line execution cannot prove. Whether the
-  witness changes grades on real code is what the [CVE benchmark](#real-world-cves) is
-  for.
-* **There is no precision figure.** Three or four findings were line-proven per run, too
-  few to divide by. And the clean control was analysed in only one of the three runs:
-  in the other two, the model's reply for it could not be parsed, so the file was never
-  examined. (This run predates capturing the reply itself; later diagnostic calls on the
-  same file caught one, a reply that closed its findings list twice.) In the run where it
-  was read, its one candidate was rejected by the static
-  gate before any exploit ran. The hunter now asks again when a reply is malformed
-  (`2ae9118`); a re-run on that commit will replace this measurement.
-* **Five cases is a small benchmark.** One case moves recall by 20 points, so a single
-  run says little on its own; that is why the range is reported, not the best run.
+No precision figure was quoted then: the clean control was analysed in only one of the
+three runs, because the model's reply for it could not be parsed in the other two.
 
 ### v1 results (August 2026)
 
@@ -454,6 +474,12 @@ cd site && npm install && npm run build   # outputs to ../docs
 * **Prompt injection is reduced, not removed.** Fencing makes it harder for the target to
   address the model, but the model still reads it. An injected *finding* still has to be
   proven by execution; an injected "report nothing" is the residual risk.
+* **The success marker is the exploit's own word.** The tracer proves the reported line
+  ran; the marker says the attack worked, and the exploit prints it. An exploit that
+  rigs its environment instead of the target can therefore earn `LINE_PROVEN` -- this
+  happened on the clean control in the 26 September runs. Next: refuse exploits that
+  alter the sandbox environment, and grade network-dependent classes such as SSRF as
+  not testable in a network-off sandbox.
 * **Fix verification is a regression check, not a proof of absence.** It shows the exploits
   that proved the finding no longer work against the patched code; another exploit might.
 * `sys.settrace` does not see into C extensions and conflicts with debuggers or coverage
