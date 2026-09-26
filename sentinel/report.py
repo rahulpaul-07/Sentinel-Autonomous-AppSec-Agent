@@ -24,7 +24,7 @@ the validator threw out and why.
 from __future__ import annotations
 
 import html
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from sentinel.scanner import ScanReport
 
@@ -122,7 +122,7 @@ def _envgap_block(val: dict) -> str:
 def _gate_block(scanned: dict) -> str:
     """For gated-out candidates, show why the static gate rejected them."""
     r = scanned.get("reachability")
-    if not r or not r.get("verdict") in ("no_taint_path", "no_sink_at_line", "safe_usage"):
+    if not r or r.get("verdict") not in ("no_taint_path", "no_sink_at_line", "safe_usage"):
         return ""
     return (
         '<div class="gate"><span class="wlabel">Static gate</span>'
@@ -234,7 +234,7 @@ def render_html(report: ScanReport, title: str = "Sentinel Scan Report") -> str:
         for k, v in sorted(sev.items(), key=lambda kv: _SEVERITY_ORDER.get(kv[0], 4))
     ) or '<span class="muted">no line-proven findings</span>'
 
-    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    generated = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     n_proven = counts.get("line_proven", 0)
     n_class = counts.get("class_only", 0)
@@ -245,7 +245,7 @@ def render_html(report: ScanReport, title: str = "Sentinel Scan Report") -> str:
         f'<p class="hint">The exploit succeeded <em>and</em> the reported line executed while it ran. '
         f'These are claims demonstrated about this code.</p>{proven_cards}'
         if proven_cards
-        else f'<h2 class="section">Line-proven <span class="count">0</span></h2>'
+        else '<h2 class="section">Line-proven <span class="count">0</span></h2>'
         '<p class="empty">No finding was proven exploitable at its reported line.</p>'
     )
 

@@ -120,7 +120,7 @@ def _ensure_env() -> None:
             from dotenv import load_dotenv
 
             load_dotenv()
-        except Exception:  # dotenv optional; env vars can be set another way
+        except ImportError:  # dotenv optional; env vars can be set another way
             pass
         _env_loaded = True
 
@@ -219,7 +219,8 @@ class LLMClient:
         if hint is not None:
             # Small cushion on top of the stated delay: their clock and ours differ.
             return min(hint + 0.5, MAX_BACKOFF_SECONDS)
-        return min(2.0 ** attempt + random.uniform(0, 0.5), MAX_BACKOFF_SECONDS)
+        return min(2.0 ** attempt + random.uniform(0, 0.5),  # noqa: S311 (jitter, not a secret)
+                   MAX_BACKOFF_SECONDS)
 
     # --------------------------------------------------------------- public API
 

@@ -15,7 +15,7 @@ so commit code before measuring with it.
 from __future__ import annotations
 
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -33,7 +33,7 @@ def sentinel_revision(root: Path = REPO_ROOT) -> dict:
 
 def stamp(model: str) -> dict:
     return {
-        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "started_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "model": model,
         "sentinel": sentinel_revision(),
     }

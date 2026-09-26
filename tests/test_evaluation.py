@@ -1,5 +1,8 @@
 """Unit tests for the metrics math. Fast, deterministic, no LLM needed."""
 
+import pytest
+
+from sentinel.evaluation import _class_matches
 from sentinel.metrics import Metrics
 
 
@@ -21,11 +24,8 @@ def test_metrics_add():
     total = Metrics(1, 1, 0) + Metrics(2, 0, 1)
     assert (total.tp, total.fp, total.fn) == (3, 1, 1)
 
+
 # --- class matching: decides what counts as a true positive ---------------------
-
-import pytest
-
-from sentinel.evaluation import _class_matches
 
 
 @pytest.mark.parametrize("a, b", [

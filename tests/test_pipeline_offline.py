@@ -148,7 +148,6 @@ def test_reachability_gate_blocks_before_any_model_call(monkeypatch):
     llm = StubLLM()
     # safe_app line 26 is a parameterized query -> the gate should reject it.
     scanner = Scanner(llm, "targets/safe_app")
-    calls_before_validation = None
 
     class SafeStub(StubLLM):
         def complete(self, prompt, system=None):

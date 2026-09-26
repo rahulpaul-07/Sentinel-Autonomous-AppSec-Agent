@@ -28,13 +28,13 @@ import statistics
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 from sentinel.llm import LLMClient, QuotaExhausted
 from sentinel.metrics import Metrics
 from sentinel.evaluation import evaluate_target_tiered
-from sentinel.provenance import stamp
+from sentinel.provenance import REPO_ROOT, stamp
 from sentinel.scanner import describe_unreadable
 from sentinel.sandbox import Sandbox, SandboxUnavailable
 
@@ -68,7 +68,7 @@ class RunResult:
                 "tiers": self.tiers, "targets": self.targets, "warnings": self.warnings}
 
     @classmethod
-    def from_dict(cls, d: dict) -> "RunResult":
+    def from_dict(cls, d: dict) -> RunResult:
         def metrics(m):
             return Metrics(m["tp"], m["fp"], m["fn"])
         return cls(metrics(d["strict"]), metrics(d["permissive"]), d.get("tiers", {}),
@@ -81,7 +81,10 @@ def _one_run(llm: LLMClient, build_env: bool) -> RunResult:
     tiers: Counter = Counter()
     per_target, warnings = [], []
     for target in TARGETS:
-        m = evaluate_target_tiered(llm, target, build_env=build_env)
+        # Recorded as written in TARGETS; resolved against the checkout so the
+        # installed `sentinel-eval` works from any directory.
+        path = target if Path(target).is_dir() else str(REPO_ROOT / target)
+        m = evaluate_target_tiered(llm, path, build_env=build_env)
         strict, permissive = strict + m.strict, permissive + m.permissive
         tiers.update(m.tiers)
         env = m.environment or {}
@@ -150,7 +153,7 @@ def _delta(after: dict, before: dict) -> dict:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _save(path: str, record: dict) -> None:

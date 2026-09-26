@@ -53,7 +53,7 @@ class Metrics:
         denom = 2 * self.tp + self.fp + self.fn
         return 2 * self.tp / denom if denom else None
 
-    def __add__(self, other: "Metrics") -> "Metrics":
+    def __add__(self, other: Metrics) -> Metrics:
         return Metrics(self.tp + other.tp, self.fp + other.fp, self.fn + other.fn)
 
     def to_dict(self) -> dict:

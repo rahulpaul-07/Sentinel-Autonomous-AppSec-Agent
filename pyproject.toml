@@ -25,7 +25,7 @@ sentinel-eval = "evaluate:main"
 sentinel-cve = "benchmark_cves:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.14,<0.15"]
 
 [tool.setuptools]
 packages = ["sentinel"]
@@ -38,3 +38,23 @@ testpaths = ["tests"]
 # so `pytest` stays offline; run them with `pytest -m docker`.
 markers = ["docker: needs a running Docker daemon"]
 addopts = '-m "not docker"'
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["site", "docs", "targets", "tests/fixtures", ".cve-cache"]
+
+[tool.ruff.lint]
+# pyflakes, pycodestyle, bugbear, pyupgrade, and flake8-bandit security rules.
+select = ["E", "F", "W", "B", "UP", "S"]
+ignore = [
+    "E501",   # long lines: prompts and messages read better unwrapped
+    "S101",   # assert is how pytest tests
+    "S603", "S607",  # subprocess with argument vectors (never shell=True) to docker/git
+    "S108",   # /tmp is the sandbox container's tmpfs, not the host's
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests and examples build deliberately dangerous inputs as data.
+"tests/**" = ["S"]
+"examples/**" = ["S"]
