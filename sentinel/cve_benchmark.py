@@ -33,7 +33,7 @@ from pathlib import Path, PurePosixPath
 
 from sentinel.evaluation import LINE_TOLERANCE, _class_matches
 from sentinel.evidence import Evidence
-from sentinel.llm import QuotaExhausted
+from sentinel.llm import ModelError, QuotaExhausted
 from sentinel.provenance import stamp
 
 SCHEMA_VERSION = 1
@@ -353,7 +353,7 @@ def run_benchmark(cases: list[CveCase], llm, runs: int, cache_dir: str | Path,
                 try:
                     score_vulnerable(case, _scan(scanner_factory, llm, case, vulnerable), result)
                     score_fixed(case, _scan(scanner_factory, llm, case, fixed), result)
-                except QuotaExhausted:
+                except (QuotaExhausted, ModelError):
                     # Not a broken case: every later case would fail the same way.
                     raise
                 except Exception as exc:  # one broken case must not end the run

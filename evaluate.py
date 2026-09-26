@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from pathlib import Path
 
-from sentinel.llm import LLMClient, QuotaExhausted
+from sentinel.llm import LLMClient, ModelError, QuotaExhausted
 from sentinel.metrics import Metrics
 from sentinel.evaluation import evaluate_target_tiered
 from sentinel.provenance import REPO_ROOT, stamp
@@ -308,6 +308,11 @@ def main() -> int:
             print(f"\nStopped: {exc.summary()}. Run {i} was not finished and is not counted; "
                   f"{saved_note}")
             return 4
+        except ModelError as exc:
+            persist(str(exc))
+            print(f"\nStopped: model call failed: {exc}. Run {i} is not counted; finished "
+                  "runs are saved when --json is given.", file=sys.stderr)
+            return 5
         r.started_at, r.tokens = started, _delta(_usage(llm), before)
         runs.append(r)
         persist(None)

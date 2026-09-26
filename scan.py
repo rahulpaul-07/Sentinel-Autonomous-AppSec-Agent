@@ -18,6 +18,7 @@ Exit codes:
   2  bad arguments or configuration
   3  Docker is not usable
   4  the model provider's usage limit stopped the scan
+  5  the model provider refused the request (bad key, unknown model, outage)
 """
 
 from __future__ import annotations
@@ -28,12 +29,12 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from sentinel.llm import LLMClient, QuotaExhausted
+from sentinel.llm import LLMClient, ModelError, QuotaExhausted
 from sentinel.patcher import write_fixed
 from sentinel.sandbox import Sandbox, SandboxUnavailable
 from sentinel.scanner import Scanner
 
-EXIT_FINDINGS, EXIT_USAGE, EXIT_NO_DOCKER, EXIT_QUOTA = 1, 2, 3, 4
+EXIT_FINDINGS, EXIT_USAGE, EXIT_NO_DOCKER, EXIT_QUOTA, EXIT_MODEL = 1, 2, 3, 4, 5
 
 # Severity ranks for --fail-on. A proven finding whose severity the model did not
 # state counts as critical: a gate should fail closed on what it cannot rank.
@@ -216,6 +217,9 @@ def main(argv: list[str] | None = None) -> int:
     except QuotaExhausted as exc:
         print(f"error: {exc.summary()}. No report was written.", file=sys.stderr)
         return EXIT_QUOTA
+    except ModelError as exc:
+        print(f"error: model call failed: {exc}. No report was written.", file=sys.stderr)
+        return EXIT_MODEL
 
     _print_summary(report, validate, args.show_class_only)
     _write_outputs(report, args)

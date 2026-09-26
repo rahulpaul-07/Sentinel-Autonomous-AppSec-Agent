@@ -147,3 +147,44 @@ def test_every_request_carries_a_timeout(client, monkeypatch):
     c, calls, _ = client([])
     c.complete("hi")
     assert calls[0]["timeout"] == 600.0
+
+
+class AuthenticationError(Exception):
+    pass
+
+
+def test_a_bad_key_is_one_clean_error_not_a_library_traceback(client):
+    """Not retryable, and reported as ModelError so the CLI can print one line."""
+    c, calls, sleeps = client([AuthenticationError("Invalid API Key\nlong provider body")])
+    with pytest.raises(llm_mod.ModelError) as exc:
+        c.complete("hi")
+    assert len(calls) == 1 and sleeps == []
+    assert str(exc.value) == "stub/model: AuthenticationError: Invalid API Key"
+
+
+def test_exhausted_retries_are_a_model_error(client):
+    c, calls, _ = client([RateLimitError("slow down")] * 5)
+    with pytest.raises(llm_mod.ModelError):
+        c.complete("hi")
+    assert len(calls) == 5
+
+
+def test_cli_reports_a_model_error_with_its_own_exit_code(monkeypatch, capsys):
+    import scan
+
+    class Failing:
+        model = "stub/model"
+
+    monkeypatch.setattr(scan, "LLMClient", lambda: Failing())
+
+    class Boom:
+        def __init__(self, *a, **k):
+            pass
+
+        def scan(self, **k):
+            raise llm_mod.ModelError("stub/model", AuthenticationError("Invalid API Key"))
+
+    monkeypatch.setattr(scan, "Scanner", Boom)
+    assert scan.main(["targets/vulnerable_app", "--no-validate"]) == scan.EXIT_MODEL
+    err = capsys.readouterr().err
+    assert "Invalid API Key" in err and "Traceback" not in err

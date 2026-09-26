@@ -124,3 +124,27 @@ def test_sandbox_drops_root_and_caps_output(monkeypatch):
     assert cmd[cmd.index("--security-opt") + 1] == "no-new-privileges"
     assert "--memory-swap=256m" in cmd
     assert "head -c" in cmd[-1] and "echo hi" in cmd[-1]
+
+
+def test_every_documented_isolation_flag_is_passed(monkeypatch):
+    """The README and project page list these; each must reach `docker run`."""
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        class R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    Sandbox(memory="256m", cpus="1.0", pids_limit=128, timeout_seconds=20).run("true")
+    cmd = captured["cmd"]
+    flag = lambda name: cmd[cmd.index(name) + 1]  # noqa: E731
+
+    assert flag("--network") == "none"
+    assert flag("--cap-drop") == "ALL"
+    assert flag("--tmpfs") == "/tmp:size=64m"
+    assert {"--rm", "--read-only", "--memory=256m", "--memory-swap=256m",
+            "--cpus=1.0", "--pids-limit=128"} <= set(cmd)

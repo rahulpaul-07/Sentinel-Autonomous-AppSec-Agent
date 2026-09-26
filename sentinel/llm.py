@@ -94,6 +94,20 @@ class QuotaExhausted(RuntimeError):
                 f"{minutes}m {seconds}s" if minutes else f"{seconds}s")
         return f"{self.model} usage limit reached; the provider says try again in {wait}"
 
+class ModelError(RuntimeError):
+    """A model call failed in a way retrying will not fix, or retries ran out.
+
+    Wraps the provider SDK's own exception so callers can report one clean line --
+    "invalid API key", "unknown model" -- instead of a library traceback, without
+    importing the SDK to catch it.
+    """
+
+    def __init__(self, model: str, cause: BaseException) -> None:
+        self.model = model
+        first_line = (str(cause).strip().splitlines() or [""])[0][:300]
+        super().__init__(f"{model}: {type(cause).__name__}: {first_line}")
+
+
 _litellm = None  # cached module handle; imported on first real use
 _env_loaded = False
 
@@ -263,13 +277,15 @@ class LLMClient:
                     logger.error(
                         "Model call failed after %d retries: %s", self.max_retries, exc
                     )
-                    raise
+                    raise ModelError(self.model, exc) from exc
                 delay = self._backoff_seconds(exc, attempt)
                 logger.warning(
                     "Transient model error (%s). Retry %d/%d in %.1fs.",
                     type(exc).__name__, attempt + 1, self.max_retries, delay,
                 )
                 time.sleep(delay)
+            except Exception as exc:  # not transient: a bad key, an unknown model
+                raise ModelError(self.model, exc) from exc
 
         if response is None:  # pragma: no cover - unreachable in normal flow
             raise RuntimeError("Model call returned no response.")
