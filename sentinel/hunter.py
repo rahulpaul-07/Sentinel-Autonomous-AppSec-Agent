@@ -17,10 +17,18 @@ and leave precision to the stage that can actually execute an exploit.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass
 
 from sentinel.llm import LLMClient
+from sentinel.prompting import UNTRUSTED_NOTICE, fence
 from sentinel.tools import Tools
+
+# Model output is untrusted too: it reaches the terminal, JSON, SARIF and an HTML
+# page. Every field is reduced to a known shape before anything downstream sees it.
+SEVERITIES = ("critical", "high", "medium", "low")
+_MAX_CLASS_CHARS = 80
+_MAX_DESCRIPTION_CHARS = 500
 
 
 @dataclass
@@ -40,7 +48,7 @@ class Finding:
 SYSTEM_PROMPT = (
     "You are a meticulous application security analyst. You find real, exploitable "
     "vulnerabilities in source code, and you never invent issues that aren't there. "
-    "You respond with JSON only - no prose, no markdown."
+    "You respond with JSON only - no prose, no markdown. " + UNTRUSTED_NOTICE
 )
 
 # {path} and {source} are filled in per file before sending to the model.
@@ -57,9 +65,7 @@ For each vulnerability, report:
   - confidence: a number from 0.0 to 1.0
 
 File: {path}
---- BEGIN CODE ---
-{source}
---- END CODE ---
+{source_block}
 
 Respond with ONLY this JSON shape and nothing else:
 {{"findings": [{{"vuln_class": "", "line": 0, "severity": "", "description": "", "confidence": 0.0}}]}}
@@ -146,6 +152,8 @@ class Hunter:
         # Files whose first reply was malformed and whose second one was used.
         self.retried_files: list[str] = []
         self.dropped_entries = 0
+        # The same claim reported twice would be validated twice.
+        self.duplicate_entries = 0
 
     def hunt(self) -> list[Finding]:
         """Analyze every file in the target and return all candidate findings."""
@@ -153,6 +161,7 @@ class Hunter:
         self.unreadable_details = {}
         self.retried_files = []
         self.dropped_entries = 0
+        self.duplicate_entries = 0
         all_findings: list[Finding] = []
         for rel_path in self.tools.list_files():
             source = self.tools.read_file(rel_path)
@@ -160,7 +169,7 @@ class Hunter:
         return all_findings
 
     def _hunt_file(self, path: str, source: str) -> list[Finding]:
-        prompt = USER_PROMPT.format(path=path, source=source)
+        prompt = USER_PROMPT.format(path=path, source_block=fence(path, source))
         response = self.llm.complete(prompt=prompt, system=SYSTEM_PROMPT)
         items, error = _read_findings(response.text)
         attempts = 1
@@ -188,26 +197,61 @@ class Hunter:
                 "reply": response.text[:REPLY_CAP],
             }
             return []
-        return self._findings(items, path)
+        return self._findings(items, path, line_count=source.count("\n") + 1)
 
-    def _findings(self, items: list, path: str) -> list[Finding]:
-        """Turn parsed finding entries into Finding objects, counting any dropped."""
+    def _findings(self, items: list, path: str, line_count: int | None = None) -> list[Finding]:
+        """Turn parsed finding entries into Finding objects, counting any dropped.
+
+        An entry is dropped when it cannot name a real location: no class, or a
+        line that is not in the file. Other fields are normalised rather than
+        trusted: severity to a fixed vocabulary, confidence into [0, 1], free text
+        to a bounded length.
+        """
         findings: list[Finding] = []
+        seen: set[tuple[str, int, str]] = set()
         for item in items:
             try:
-                findings.append(
-                    Finding(
-                        vuln_class=str(item["vuln_class"]),
-                        file=path,
-                        line=int(item["line"]),
-                        severity=str(item.get("severity", "unknown")),
-                        description=str(item.get("description", "")),
-                        confidence=float(item.get("confidence", 0.0)),
-                    )
-                )
-            except (KeyError, ValueError, TypeError):
+                finding = _normalise(item, path, line_count)
+            except (KeyError, ValueError, TypeError, AttributeError):
                 # Skip a malformed entry rather than crashing the whole run, but
                 # count it so the loss is visible.
                 self.dropped_entries += 1
                 continue
+            key = (finding.file, finding.line, finding.vuln_class.lower())
+            if key in seen:
+                self.duplicate_entries += 1
+                continue
+            seen.add(key)
+            findings.append(finding)
         return findings
+
+
+def _normalise(item: dict, path: str, line_count: int | None) -> Finding:
+    vuln_class = " ".join(str(item["vuln_class"]).split())[:_MAX_CLASS_CHARS]
+    if not vuln_class:
+        raise ValueError("empty vuln_class")
+    line = item["line"]
+    if isinstance(line, bool) or not isinstance(line, (int, float, str)):
+        raise TypeError("line is not a number")
+    line = int(line)
+    if line < 1 or (line_count is not None and line > line_count):
+        raise ValueError(f"line {line} is not in the file")
+    severity = str(item.get("severity", "")).strip().lower()
+    if severity not in SEVERITIES:
+        severity = "unknown"
+    try:
+        confidence = float(item.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if math.isnan(confidence):
+        confidence = 0.0
+    confidence = min(max(confidence, 0.0), 1.0)
+    description = " ".join(str(item.get("description", "")).split())
+    return Finding(
+        vuln_class=vuln_class,
+        file=path,
+        line=line,
+        severity=severity,
+        description=description[:_MAX_DESCRIPTION_CHARS],
+        confidence=confidence,
+    )

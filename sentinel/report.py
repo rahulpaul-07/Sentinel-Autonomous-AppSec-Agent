@@ -35,6 +35,12 @@ def _esc(text: object) -> str:
     return html.escape(str(text), quote=True)
 
 
+def _slug(text: object) -> str:
+    """A CSS class fragment from model-supplied text: known severities, else 'unknown'."""
+    value = str(text).lower()
+    return value if value in _SEVERITY_ORDER else "unknown"
+
+
 def _diff_html(diff: str) -> str:
     """Colour a unified diff: additions green, removals red, hunk headers muted."""
     rows = []
@@ -158,7 +164,7 @@ def _finding_card(scanned: dict, patches_by_file: dict[str, str]) -> str:
       <article class="card {css}">
         <div class="card-head">
           <div class="card-title">
-            <span class="sev sev-{_esc(sev)}">{_esc(sev)}</span>
+            <span class="sev sev-{_slug(sev)}">{_esc(sev)}</span>
             <h3>{_esc(f["vuln_class"])}</h3>
           </div>
           <span class="status status-{css}" title="{_esc(meaning)}">{badge}</span>
@@ -202,7 +208,7 @@ def render_html(report: ScanReport, title: str = "Sentinel Scan Report") -> str:
 
     sev = counts["by_severity"]
     sev_pills = "".join(
-        f'<span class="pill pill-{k}">{v} {k}</span>'
+        f'<span class="pill pill-{_slug(k)}">{int(v)} {_esc(k)}</span>'
         for k, v in sorted(sev.items(), key=lambda kv: _SEVERITY_ORDER.get(kv[0], 4))
     ) or '<span class="muted">no line-proven findings</span>'
 
@@ -259,6 +265,8 @@ def render_html(report: ScanReport, title: str = "Sentinel Scan Report") -> str:
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{_esc(title)}</title>
 <style>
