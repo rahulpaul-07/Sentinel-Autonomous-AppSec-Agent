@@ -2,6 +2,14 @@
 # Windows does not show every line of docs/ as changed.
 * text=auto eol=lf
 
+# Always text, even when auto-detection guesses otherwise: a CRLF
+# docs/index.html built on Windows was once stored as-is and failed the
+# site drift check in CI.
+*.html text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.css text eol=lf
+
 # Built and binary assets are stored byte for byte.
 *.png binary
 *.woff binary
