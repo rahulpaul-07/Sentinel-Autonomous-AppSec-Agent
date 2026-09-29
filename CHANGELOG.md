@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.3.1 — 29 September 2026: follow-up review
+
+### Fixed
+
+- A scan run without a terminal (CI, a pipe) and without `--yes` or `--no-patch`
+  crashed with an `EOFError` traceback at the first fix prompt. That happened after the
+  reports were written but before `--fail-on` set the exit code. A closed stdin now
+  declines the fix and the scan finishes. Pinned by
+  `test_a_closed_stdin_declines_the_fix_instead_of_crashing`.
+- Building the project page on Windows showed every line of `docs/` as changed, because
+  the repository had no `.gitattributes` and the checkout converted line endings. Text is
+  now normalised to LF, and fonts and images are marked binary.
+- `.gitignore` listed the scan-output block twice.
+
+### Documentation
+
+- The README now leads with a summary, a table of contents and a project layout. The
+  earlier measurements and the bug history are folded into expandable sections, and
+  the test count is corrected (340 offline, 15 Docker).
+- The 44% figure for marker-only exploit checks is now cited: PoC-Gym,
+  arXiv:2602.04165, §5.1.
+- The project page was restructured: architecture diagram, quickstart, and an
+  engineering section covering the tests and CI jobs.
+
+No change to the pipeline or the grading, so the 26 September measurements still
+describe the current code. The false proof on the clean control is still open.
+
 ## 0.3.0 — September 2026: security audit
 
 A review of the pipeline against its own threat model: the exploit is untrusted code,
