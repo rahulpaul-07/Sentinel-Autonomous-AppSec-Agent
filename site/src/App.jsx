@@ -168,12 +168,16 @@ function Hero() {
       <p className="font-mono text-[12px] uppercase tracking-[.14em] text-muted">
         Autonomous AppSec agent · Python · MIT
       </p>
-      <div className="mt-8 grid gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:items-center">
-        <BlurFade>
-          <h1 className="text-[44px] font-semibold leading-[1.02] tracking-[-0.03em] text-ink sm:text-[64px]">
-            A finding is a claim.<br className="hidden sm:block" /> Sentinel makes it <Em className="text-proof">prove itself.</Em>
-          </h1>
-          <p className="mt-6 max-w-[52ch] text-[17px] leading-[1.6] text-body sm:text-[18px]">
+      {/* The headline spans the page so each sentence gets its own line on wide
+          screens; below that it is balanced so no word is left on a line alone. */}
+      <BlurFade>
+        <h1 className="mt-8 text-balance text-[40px] font-semibold leading-[1.04] tracking-[-0.03em] text-ink sm:text-[56px] lg:text-[72px]">
+          A finding is a claim.<br className="hidden md:block" /> Sentinel makes it <Em className="text-proof">prove itself.</Em>
+        </h1>
+      </BlurFade>
+      <div className="mt-10 grid gap-12 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] lg:items-start">
+        <BlurFade delay={0.1}>
+          <p className="max-w-[52ch] text-[17px] leading-[1.6] text-body sm:text-[18px]">
             An LLM will invent a vulnerability, then write an exploit that &ldquo;proves&rdquo; it without
             running your code. Sentinel runs the exploit against the exact line it accused, under a tracer,
             and grades the finding by what actually executed. Then it replays the exploit against its own fix.
@@ -188,7 +192,7 @@ function Hero() {
               Try the tracer
             </a>
             <a href="./sample-report.html"
-               className="inline-flex items-center gap-1 px-2 py-2.5 font-medium text-ink underline decoration-rule underline-offset-4 hover:decoration-ink">
+               className="inline-flex items-center gap-1 py-2.5 font-medium text-ink underline decoration-rule underline-offset-4 hover:decoration-ink">
               Sample report <ArrowUpRight className="h-4 w-4" aria-hidden />
             </a>
           </div>
