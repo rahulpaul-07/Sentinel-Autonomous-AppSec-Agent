@@ -1,0 +1,9 @@
+# Normalise text to LF in the repository and the working tree, so a build on
+# Windows does not show every line of docs/ as changed.
+* text=auto eol=lf
+
+# Built and binary assets are stored byte for byte.
+*.png binary
+*.woff binary
+*.woff2 binary
+*.ico binary

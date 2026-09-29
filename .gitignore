@@ -19,10 +19,5 @@ report.html
 out.json
 *.patch
 
-# Scan output
-report.html
-out.json
-*.patch
-
 # CVE benchmark checkouts
 .cve-cache/
