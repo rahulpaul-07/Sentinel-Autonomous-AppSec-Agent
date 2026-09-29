@@ -184,6 +184,19 @@ def test_an_invalid_fix_is_not_applied_even_when_the_user_says_yes(tmp_path, mon
     assert (tmp_path / "app.py").read_text() == "x = 1\n"
 
 
+def test_a_closed_stdin_declines_the_fix_instead_of_crashing(tmp_path, monkeypatch):
+    """Regression: without --yes, a non-interactive run (CI) died with EOFError at
+    the first fix prompt, before --fail-on could set the exit code."""
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+
+    def closed(*_):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", closed)
+    scan._offer_patches(_Report([_patch(VERIFIED)]), str(tmp_path), auto_yes=False)
+    assert (tmp_path / "app.py").read_text() == "x = 1\n"
+
+
 def test_evidence_is_unchanged_by_verification(monkeypatch):
     _sandbox(monkeypatch, "SENTINEL_PWNED\n" + _record([3], False))
     report = _scan()

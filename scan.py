@@ -150,6 +150,21 @@ def _write_outputs(report, args) -> None:
             webbrowser.open(Path(out).as_uri())
 
 
+def _ask(prompt: str) -> str:
+    """Read a y/N answer. No answer -- stdin closed, as in CI -- means no.
+
+    Without this, a scan run non-interactively without --yes or --no-patch died
+    with an EOFError traceback at the first fix, after the reports were written
+    but before --fail-on set the exit code.
+    """
+    try:
+        return input(prompt).strip().lower()
+    except EOFError:
+        print("\n  No answer (stdin is closed): not applied. Pass --yes to apply "
+              "verified fixes, or --no-patch to skip fixes.")
+        return ""
+
+
 def _offer_patches(report, target: str, auto_yes: bool) -> None:
     for patch in report.patches:
         print("=" * 64)
@@ -167,7 +182,7 @@ def _offer_patches(report, target: str, auto_yes: bool) -> None:
             if not patch.applicable:
                 print("  --yes applies only verified fixes; review this one by hand.")
         else:
-            answer = input(f"Apply this fix to {patch.file}? [y/N] ").strip().lower()
+            answer = _ask(f"Apply this fix to {patch.file}? [y/N] ")
         if answer == "y":
             write_fixed(Path(target) / patch.file, patch.fixed_code)
             print(f"  Applied - {patch.file} updated.\n")
