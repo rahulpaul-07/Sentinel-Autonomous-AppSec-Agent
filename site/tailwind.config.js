@@ -23,6 +23,7 @@ export default {
       fontFamily: {
         sans: ['"IBM Plex Sans"', "system-ui", "sans-serif"],
         mono: ['"IBM Plex Mono"', "ui-monospace", "monospace"],
+        serif: ['"Instrument Serif"', "Georgia", "serif"],
       },
       maxWidth: { page: "1120px" },
     },

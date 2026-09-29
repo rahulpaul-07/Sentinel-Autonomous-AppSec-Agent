@@ -30,35 +30,149 @@ export const V1_RUNS = [
     note: "2 false positives on the clean control" },
 ];
 
-// Deterministic verdicts of the static gate, pinned by tests/test_reachability.py.
-export const GATE = [
-  { claim: "SQL Injection", file: "vulnerable_app/app.py:33", verdict: "reachable",
-    detail: "request.args.get() reaches cursor.execute", blocked: false },
-  { claim: "Command Injection", file: "vulnerable_app/app.py:45", verdict: "reachable",
-    detail: "request.args.get() reaches os.system", blocked: false },
-  { claim: "Path Traversal", file: "traversal_app/app.py:22", verdict: "reachable",
-    detail: "request.args.get() reaches open", blocked: false },
-  { claim: "SQL Injection", file: "safe_app/app.py:26", verdict: "safe usage",
-    detail: "constant query with bound parameters", blocked: true },
-  { claim: "Command Injection", file: "safe_app/app.py:34", verdict: "safe usage",
-    detail: "argument vector, no shell, program is not a shell", blocked: true },
-  { claim: "Hardcoded Secret", file: "safe_app/app.py:17", verdict: "not analyzable",
-    detail: "an env-var read is not a literal, so the gate declines to guess", blocked: false },
+const SRC = `${REPO}/blob/master`;
+
+// One panel per stage, each showing a real artifact of that stage: the hunter's
+// reply schema, the gate's actual verdicts (sentinel.reachability.analyze on the
+// benchmark files), the sandbox's actual docker flags, a witness record from the
+// recorded run in the demo, the two real lines the fix changes, and the verifier's
+// own outcome strings.
+export const STAGES = [
+  { id: "hunt", n: "01", title: "Hunt", tag: "claims",
+    what: "A model reads each file with line numbers and names candidates: class, file, line. Its reply is untrusted input, so it is parsed, cut to a fixed schema, severity checked against a fixed vocabulary, and deduplicated before anything else sees it.",
+    label: "example reply, in the schema hunter.py requires",
+    artifact: `{"findings": [
+  {"vuln_class": "SQL Injection",
+   "line": 33,
+   "severity": "critical",
+   "description": "request arg concatenated into SQL",
+   "confidence": 0.95}
+]}`,
+    files: [["sentinel/hunter.py", `${SRC}/sentinel/hunter.py`]] },
+  { id: "gate", n: "02", title: "Gate", tag: "static",
+    what: "Deterministic AST taint analysis asks whether attacker data reaches the claimed line, and whether the call is already made safely. It rejects only on positive evidence. Anything it cannot model goes on to be tested.",
+    label: "real output of reachability.analyze() on the benchmark",
+    artifact: `analyze(vulnerable_app/app.py, "SQL Injection", 33)
+  verdict  reachable
+  reason   attacker-controlled data reaches \`cursor.execute\`
+  path     source: request.args.get() -> sink: cursor.execute() at line 34
+
+analyze(safe_app/app.py, "SQL Injection", 26)       rejected, no model call
+  verdict  safe_usage
+  reason   \`cursor.execute\` at line 26: query string is a constant
+           with bound parameters (parameterized query)
+
+analyze(safe_app/app.py, "SSRF", 34)                fails open, tested
+  verdict  not_analyzable
+  reason   attacker-controlled data (request.args.get()) reaches
+           \`subprocess.run\` at line 34, which has no SSRF sink model;
+           gate skipped`,
+    files: [["sentinel/reachability.py", `${SRC}/sentinel/reachability.py`]] },
+  { id: "prove", n: "03", title: "Prove", tag: "sandboxed",
+    what: "The model writes an exploit that must import the target module and drive it. It runs inside the tracing harness in a disposable container. If it fails, its output goes back to the model, up to three attempts.",
+    label: "the container flags, from sandbox.py",
+    artifact: `docker run --rm --name sentinel-sbx-<id> \\
+  --network none \\
+  --memory=256m --memory-swap=256m --cpus=1.0 --pids-limit=128 \\
+  --cap-drop ALL --security-opt no-new-privileges \\
+  --user 65534:65534 -e PYTHONDONTWRITEBYTECODE=1 \\
+  --read-only --tmpfs /tmp:size=64m \\
+  -v <target>:/work:ro -w /work \\
+  <image> sh -c '<harness; stdout and stderr capped at 1 MB>'
+# killed after 20 s`,
+    files: [["sentinel/validator.py", `${SRC}/sentinel/validator.py`],
+            ["sentinel/sandbox.py", `${SRC}/sentinel/sandbox.py`]] },
+  { id: "grade", n: "04", title: "Grade", tag: "tiered",
+    what: "The harness writes one record, authenticated by a per-run nonce, listing which lines of the target executed and which ran only because it was imported. Import-time lines never count. Marker plus the accused line is LINE PROVEN; marker without it is CLASS ONLY.",
+    label: "witness record from the 'drive the real code' run in the demo",
+    artifact: `SENTINEL_WITNESS:{"nonce": "<per-run secret>",
+  "available": true, "file_executed": true,
+  "line_executed": true,
+  "executed_lines": [1, 2, 4, 6, 7, 8, 9, 10, 12, 13, 14],
+  ...}
+
+marker printed  +  line 14 executed   ->  LINE_PROVEN`,
+    files: [["sentinel/witness.py", `${SRC}/sentinel/witness.py`],
+            ["sentinel/evidence.py", `${SRC}/sentinel/evidence.py`]] },
+  { id: "fix", n: "05", title: "Fix", tag: "proven only",
+    what: "One patch per file covers every line-proven finding in it. A reply that does not parse, or leaves the file unchanged, is never offered. Class-only findings are never patched.",
+    label: "vulnerable_app/app.py:33-34 against the clean control's safe_app/app.py:26",
+    diff: [
+      ["-", `    query = "SELECT * FROM users WHERE name = '" + username + "'"`],
+      ["-", "    cursor.execute(query)"],
+      ["+", `    cursor.execute("SELECT * FROM users WHERE name = ?", (username,))`],
+    ],
+    files: [["sentinel/patcher.py", `${SRC}/sentinel/patcher.py`]] },
+  { id: "verify", n: "06", title: "Verify", tag: "replay",
+    what: "The exploits that proved the findings are replayed, unchanged, against a patched copy of the tree. No model call. Only a verified fix can be applied with --yes.",
+    label: "the three outcomes, as scanner.py reports them",
+    artifact: `verified            patched code ran, exploit failed
+still exploitable   the exploit still succeeds
+inconclusive        the exploit never reached the patched code`,
+    files: [["sentinel/scanner.py", `${SRC}/sentinel/scanner.py`]] },
 ];
 
-export const PIPELINE = [
-  { n: "01", title: "Hunt",
-    body: "A model reads each file and proposes candidates: class, file, line. They are claims, and some are invented. Its reply is parsed as untrusted input and normalised before anything else sees it." },
-  { n: "02", title: "Gate",
-    body: "Static taint analysis asks whether attacker data can reach that line, and whether the call is made safely. It rejects only on positive evidence; anything it cannot model goes on to be tested." },
-  { n: "03", title: "Prove",
-    body: "The model writes an exploit that imports the real module. It runs in a network-off, unprivileged container under a line tracer. The marker says an exploit worked; the trace says which line ran." },
-  { n: "04", title: "Grade",
-    body: "Marker plus the accused line executing is LINE PROVEN. Marker without it is CLASS ONLY. Only line-proven findings are counted, patched, or exported as errors." },
-  { n: "05", title: "Fix",
-    body: "One patch per file covering every proven finding. It must parse and must change something, or it is never offered." },
-  { n: "06", title: "Verify the fix",
-    body: "The exploits that proved the findings are replayed against a patched copy of the tree. No model call. A fix passes only if the patched code ran and no exploit succeeded." },
+// benchmarks/results/2026-09-26-eval-gpt-oss-120b.json, runs 1-3.
+export const RUN_METRICS = [
+  { key: "strict_recall", label: "Strict recall", note: "line proven", runs: [80, 60, 60] },
+  { key: "strict_precision", label: "Strict precision", note: "line proven", runs: [80, 75, 100] },
+  { key: "permissive_recall", label: "Permissive recall", note: "marker printed", runs: [100, 80, 80] },
+];
+
+export const FAQ = [
+  { q: "Does Sentinel run my code?",
+    a: "Yes. That is the point: an exploit imports the target and executes it. It does so in a Docker container with no network, a read-only root filesystem, every capability dropped, an unprivileged user, capped memory, CPU, processes and output, and a 20 second timeout. The target is mounted read-only. The one exception is --build-env, which runs pip install with network access to build the image, so it is opt-in." },
+  { q: "How is this different from Semgrep or CodeQL?",
+    a: "Those tools analyse code statically, by pattern and data flow, and never run an exploit. Sentinel's gate is static too, but it only filters. A finding counts only after an exploit has run against the code and the accused line executed. The cost of that is Docker, model calls, and Python only." },
+  { q: "Which models work?",
+    a: "Any provider litellm supports, chosen with one line: SENTINEL_MODEL in .env. It was developed on Ollama, Groq and Gemini. Model size matters: on the same benchmark, gpt-oss-120b line-proved 60 to 80% of the bugs, and the local qwen2.5-coder:7b 0 to 20%." },
+  { q: "What does a run cost?",
+    a: "Run 1 of the 26 September benchmark made 14 model calls and used 19,100 tokens across all four targets. Every results file records the tokens each run used." },
+  { q: "Why are the results a range?",
+    a: "Hosted models are not bit-reproducible, even at temperature 0, and the benchmark holds five bugs, so one case moves recall by 20 points. Three runs and their spread is the honest figure; the best run alone would not be." },
+  { q: "Can it gate a CI pipeline?",
+    a: "Yes. --sarif writes SARIF 2.1.0 for GitHub code scanning, --fail-on exits 1 on a line-proven finding at or above a severity, and the exit codes separate bad input, no Docker, an exhausted quota and a refused model request. Without a terminal, fixes are declined rather than prompting." },
+  { q: "What is the false proof in the results?",
+    a: "On the clean control, an exploit changed its sandbox environment so a safe route looked exploited, ran the accused line, and printed the success marker itself. The tracer confirmed the line ran, so it was graded LINE PROVEN. It is published with the results and listed first under the limits." },
+];
+
+// The repository, as the explorer shows it. Roles are the module docstrings.
+export const REPO_TREE = [
+  { name: "sentinel", children: [
+    ["scanner.py", "Orchestrates the pipeline and builds the ScanReport."],
+    ["hunter.py", "The LLM hunter. Parses the model's reply as untrusted input."],
+    ["reachability.py", "Static taint gate with sanitizer recognition. Fails open."],
+    ["validator.py", "Asks for exploits, runs them, self-corrects, grades them."],
+    ["witness.py", "The tracing harness, its nonce-authenticated record, the pre-execution screen."],
+    ["sandbox.py", "The Docker cage, with a preflight check."],
+    ["environment.py", "Builds per-target sandbox images from declared dependencies."],
+    ["patcher.py", "One fix per file; parse check; line endings preserved."],
+    ["evidence.py", "The five-tier evidence ladder."],
+    ["evaluation.py", "Scores scans against labelled ground truth, strict and permissive."],
+    ["report.py", "Self-contained HTML report: escaped, no script, strict CSP."],
+    ["sarif.py", "SARIF 2.1.0 export for GitHub code scanning."],
+    ["llm.py", "Provider adapter: retries, backoff, quota handling, timeouts."],
+    ["prompting.py", "Fences untrusted text with random delimiters."],
+  ] },
+  { name: "tests", children: [
+    ["test_witness.py", "Runs the real tracing harness against a real file."],
+    ["test_witness_integrity.py", "Each known forgery, run through the harness; none may prove a line."],
+    ["test_reachability.py", "The gate's verdicts, including every audited bypass."],
+    ["test_fix_loop.py", "Fix verification, --yes, line endings, closed stdin."],
+    ["integration/", "15 tests against a real Docker daemon."],
+  ] },
+  { name: "targets", children: [
+    ["vulnerable_app/", "SQL injection, command injection, a hardcoded secret."],
+    ["traversal_app/", "Path traversal."],
+    ["deserialize_app/", "Insecure deserialization."],
+    ["safe_app/", "The clean control: should produce nothing."],
+  ] },
+  { name: "benchmarks", children: [
+    ["results/", "Unedited results files; every published number comes from one."],
+    ["cves/", "Real-world CVE harness with pre-registered scoring. No cases yet."],
+  ] },
+  { file: "scan.py", role: "The sentinel CLI." },
+  { file: "evaluate.py", role: "sentinel-eval: runs the benchmark and reports the spread." },
 ];
 
 export const TIERS = [
@@ -175,7 +289,7 @@ export const STACK = [
   ["Isolation", "Docker, with sys.settrace for the line witness"],
   ["Output", "Self-contained HTML, JSON, SARIF 2.1.0"],
   ["Quality", "pytest, ruff (bandit rules), pip-audit, npm audit"],
-  ["This page", "React, Vite, Tailwind; self-hosted fonts, strict CSP, no third-party requests"],
+  ["This page", "React, Vite, Tailwind, Motion; components adapted from Magic UI (MIT); self-hosted fonts, strict CSP, no third-party requests"],
 ];
 
 export const CI_SNIPPET = `- name: Sentinel

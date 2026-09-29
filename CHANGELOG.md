@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Project page
+
+- Rebuilt as an interactive page. The hero plays a scan session in the CLI's real
+  output format; the pipeline is a stage explorer whose panels show real artifacts
+  (the gate's actual verdicts, the sandbox's docker flags, a recorded witness record);
+  results get a per-run range chart; the repository has a file explorer; and there is
+  a FAQ. Terminal, animated beam, number ticker, blur fade and scroll progress are
+  adapted from Magic UI (MIT), with attribution in each file.
+- Numbers render at their real values before any animation, and count up with a
+  fixed-length tween, so no intermediate figure is ever shown as a result.
+  Reduced-motion users see everything at once.
+
 ## 0.3.1 — 29 September 2026: follow-up review
 
 ### Fixed
