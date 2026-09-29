@@ -126,13 +126,56 @@ export const AUDIT = [
 ];
 
 export const LIMITS = [
-  "The success marker is printed by the exploit. The tracer proves the accused line ran, not that the attack worked, so an exploit that rigs its sandbox environment can declare success. It happened on the clean control on 26 September; refusing environment tampering and treating SSRF as untestable without a network are next.",
+  "The success marker is printed by the exploit. The tracer proves the accused line ran, not that the attack worked, so an exploit that rigs its sandbox environment can declare success. It happened on the clean control on 26 September, and closing it is the top roadmap item.",
   "The tracer records that a line executed, not that attacker data flowed through it. With the taint gate this is strong evidence; it is not a dataflow proof.",
   "The tracer runs in the exploit's own interpreter. The integrity checks stop accidental and naively injected forgery, not an exploit engineered to evade them; tracing from outside the process would.",
   "Prompt fencing lowers the odds of injection but cannot remove them. An injected finding still has to be proven; an injected \"report nothing\" is the residual risk.",
   "The benchmark is five labelled bugs and one clean control. Enough to catch regressions, not to quote a headline accuracy. The CVE harness exists; its manifest has no cases yet.",
   "A hardcoded secret lives on a module-level line, which runs only on import and never counts as a witness. It tops out at class-only: execution is the wrong kind of evidence for it.",
   "Python only. The gate is intra-file and pattern-based, and does not see through aliasing or across modules.",
+];
+
+// PoC-Gym, arXiv:2602.04165, section 5.1: 44% of runtime-valid candidates did not
+// reach the real vulnerability sink under post-hoc validation.
+export const POC_GYM = "https://arxiv.org/abs/2602.04165";
+
+// Counts from `pytest --collect-only` (offline) and `pytest -m docker`, and the jobs
+// in .github/workflows/ci.yml. Update these when either changes.
+export const FACTS = [
+  { value: "5", unit: "evidence tiers", note: "graded, never yes/no" },
+  { value: "340 + 15", unit: "tests", note: "offline, plus real Docker" },
+  { value: "6", unit: "CI jobs", note: "tests, sandbox, lint, audits, site" },
+  { value: "SARIF", unit: "2.1.0", note: "for GitHub code scanning" },
+];
+
+export const QUICKSTART = `python3.12 -m venv .venv && source .venv/bin/activate
+pip install -e .
+
+# pick a model: SENTINEL_MODEL plus that provider's key
+cp .env.example .env
+
+# scan, prove, and open the report (Docker must be running)
+sentinel targets/vulnerable_app --build-env --report report.html --open
+
+# measure against the labelled benchmark, spread included
+sentinel-eval --runs 5`;
+
+export const CI_JOBS = [
+  { name: "Python tests", body: "The 340 offline tests. The model and the container are stubbed, and the tests assert on how both are called." },
+  { name: "Sandbox", body: "The 15 Docker tests: real docker run, security flags, read-only mount, in-container tracer. The job fails if Docker is missing; it never skips." },
+  { name: "Import isolation", body: "The analysis modules are imported with only pytest installed, which proves they do not pull in the LLM stack." },
+  { name: "Lint", body: "ruff with pyflakes, bugbear, pyupgrade and the bandit security rules." },
+  { name: "Dependency audit", body: "pip-audit on the pinned Python lockfile and npm audit on this page's toolchain." },
+  { name: "Site drift", body: "Rebuilds this page and fails if the committed docs/ differs from its source." },
+];
+
+export const STACK = [
+  ["Language", "Python 3.12, standard-library ast for the taint analysis"],
+  ["Models", "litellm: Ollama, Groq, Gemini, Anthropic, OpenAI"],
+  ["Isolation", "Docker, with sys.settrace for the line witness"],
+  ["Output", "Self-contained HTML, JSON, SARIF 2.1.0"],
+  ["Quality", "pytest, ruff (bandit rules), pip-audit, npm audit"],
+  ["This page", "React, Vite, Tailwind; self-hosted fonts, strict CSP, no third-party requests"],
 ];
 
 export const CI_SNIPPET = `- name: Sentinel

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { ArrowUpRight, Github, Moon, Sun } from "lucide-react";
 
+import { PipelineDiagram } from "@/components/pipeline-diagram";
 import { ProofLab } from "@/components/proof-lab";
 import { cn } from "@/lib";
 import {
-  AUDIT, CI_SNIPPET, CONTROLS, CURRENT_RUNS, GATE, LIMITS, PIPELINE, REPO,
-  PRE_AUDIT_FILE, RESULTS_FILE, TIERS, V1_RUNS,
+  AUDIT, CI_JOBS, CI_SNIPPET, CONTROLS, CURRENT_RUNS, FACTS, GATE, LIMITS, PIPELINE,
+  POC_GYM, PRE_AUDIT_FILE, QUICKSTART, REPO, RESULTS_FILE, STACK, TIERS, V1_RUNS,
 } from "./data";
 
 /* ------------------------------------------------------------------ shell */
@@ -30,8 +31,8 @@ function useTheme() {
   return toggle;
 }
 
-const NAV = [["problem", "Problem"], ["method", "Method"], ["hardening", "Hardening"],
-             ["results", "Results"], ["limits", "Limits"]];
+const NAV = [["problem", "Demo"], ["method", "How it works"], ["results", "Results"],
+             ["hardening", "Security"], ["quickstart", "Quickstart"], ["engineering", "Engineering"]];
 
 function Nav() {
   const toggle = useTheme();
@@ -43,7 +44,7 @@ function Nav() {
         </a>
         <div className="ml-auto flex items-center gap-5 text-[14px]">
           {NAV.map(([id, label]) => (
-            <a key={id} href={`#${id}`} className="hidden text-body hover:text-ink md:inline">{label}</a>
+            <a key={id} href={`#${id}`} className="hidden text-body hover:text-ink lg:inline">{label}</a>
           ))}
           <button onClick={toggle} aria-label="Toggle colour theme" className="p-1 text-body hover:text-ink">
             <Sun className="hidden h-4 w-4 dark:block" aria-hidden />
@@ -137,6 +138,10 @@ function Hero() {
                className="inline-flex items-center gap-2 border border-ink px-5 py-2.5 font-medium text-ink hover:bg-panel">
               Sample report <ArrowUpRight className="h-4 w-4" aria-hidden />
             </a>
+            <a href="#quickstart"
+               className="inline-flex items-center gap-2 px-2 py-2.5 font-medium text-ink underline decoration-rule underline-offset-4 hover:decoration-ink">
+              Run it yourself
+            </a>
           </div>
         </div>
 
@@ -154,6 +159,18 @@ function Hero() {
           </dl>
         </figure>
       </div>
+
+      <dl className="mt-14 grid grid-cols-2 gap-px border border-rule bg-rule lg:grid-cols-4">
+        {FACTS.map((f) => (
+          <div key={f.unit} className="bg-paper px-5 py-4">
+            <dt className="text-[13px] text-muted">{f.note}</dt>
+            <dd className="mt-1 text-ink">
+              <span className="text-[24px] font-semibold tracking-[-0.01em]">{f.value}</span>{" "}
+              <span className="text-[15px]">{f.unit}</span>
+            </dd>
+          </div>
+        ))}
+      </dl>
     </header>
   );
 }
@@ -192,7 +209,7 @@ function Exhibit({ tag, head, code, trace, verdict, tone }) {
 
 function Problem() {
   return (
-    <Section id="problem" n="01" label="Problem"
+    <Section id="problem" n="01" label="Demo"
       title="Both exploits print the success marker. One of them never ran your code."
       lede="A scanner that checks for the marker alone reports these identically, and that is how a confident, well-formatted, fabricated finding reaches a developer.">
       <div className="mt-10 grid gap-4 md:grid-cols-2">
@@ -202,11 +219,13 @@ function Problem() {
                  trace={{ ok: true, text: "app.py:33 ran" }} verdict="LINE PROVEN" tone="text-proof" />
       </div>
       <p className="mt-8 max-w-[66ch] text-[15.5px] leading-[1.65] text-body">
-        Published work on generated exploits found that re-running them with instrumentation
-        invalidated roughly <strong className="font-semibold text-ink">44%</strong> of those that had passed a
-        marker-only check. Those systems compare the trace with a location from a labelled benchmark,
-        which measures a technique but cannot run on unlabelled code. Sentinel uses the finding&rsquo;s
-        own reported line as the target, so the check needs no ground truth.
+        In PoC-Gym&rsquo;s study of LLM-written Java exploits,{" "}
+        <strong className="font-semibold text-ink">44%</strong> of the ones its runtime check accepted never
+        reached the real vulnerable location (
+        <a href={POC_GYM} className="text-ink underline" target="_blank" rel="noopener noreferrer">arXiv:2602.04165</a>,
+        §5.1). That re-check needs a labelled benchmark to say where the bug is, so it cannot run on
+        unlabelled code. Sentinel uses the finding&rsquo;s own reported line as the target, so the check
+        needs no ground truth. Try it below: each exploit is a recorded run of the real tracing harness.
       </p>
       <ProofLab />
     </Section>
@@ -217,9 +236,12 @@ function Problem() {
 
 function Method() {
   return (
-    <Section id="method" n="02" label="Method"
+    <Section id="method" n="02" label="How it works"
       title="Grade every candidate by what was demonstrated."
       lede="A yes/no scanner throws away the most useful thing it knows: how much it actually showed. The cheap deterministic check runs before the expensive stochastic one, so invented candidates cost nothing to reject.">
+      <PipelineDiagram />
+
+      <h3 className="mt-16 text-[20px] font-semibold text-ink">The evidence ladder</h3>
       <Table head={["Tier", "Rule", "What happens"]}>
         {TIERS.map((t) => (
           <tr key={t.key}>
@@ -230,7 +252,8 @@ function Method() {
         ))}
       </Table>
 
-      <ol className="mt-14 grid gap-px border border-rule bg-rule sm:grid-cols-2 lg:grid-cols-3">
+      <h3 className="mt-16 text-[20px] font-semibold text-ink">Each stage</h3>
+      <ol className="mt-6 grid gap-px border border-rule bg-rule sm:grid-cols-2 lg:grid-cols-3">
         {PIPELINE.map((s) => (
           <li key={s.n} className="bg-paper p-5">
             <p className="font-mono text-[12px] text-muted">{s.n}</p>
@@ -269,7 +292,7 @@ const SEV_TONE = { critical: "text-sev", high: "text-sev", medium: "text-warn" }
 
 function Hardening() {
   return (
-    <Section id="hardening" n="03" label="Hardening"
+    <Section id="hardening" n="04" label="Security"
       title="The exploit is untrusted code. So is the code being scanned."
       lede="A scanner earns its keep on code nobody has vetted, and that code can carry instructions for the model reading it. Each control below is pinned by a test that fails if it is removed.">
       <div className="mt-10 grid gap-px border border-rule bg-rule md:grid-cols-3">
@@ -311,7 +334,7 @@ function Hardening() {
 
 function Results() {
   return (
-    <Section id="results" n="04" label="Results"
+    <Section id="results" n="03" label="Results"
       title="Measured after the audit, including what went wrong."
       lede="Three runs on 26 September 2026 with gpt-oss-120b, after the audit and with the answer-key comments removed: four targets holding five labelled bugs and a clean control, exploits running in each target's dependency image with the network off.">
       <Table head={["Run", "Strict recall · line proven", "Strict precision", "False proofs", "Note"]} min={680}>
@@ -380,11 +403,32 @@ function Results() {
 
 /* ------------------------------------------------------------------ usage */
 
-function Usage() {
+function CodeBlock({ caption, code }) {
   return (
-    <Section id="usage" n="05" label="Output"
-      title="A case file for people, SARIF for pipelines."
-      lede="A scan writes a self-contained HTML report with no script and no external requests, JSON, and SARIF 2.1.0 for GitHub code scanning. Only line-proven findings are errors and only they can fail a build; class-only findings are warnings; suspicions stay out of the dashboard.">
+    <figure className="flex min-w-0 flex-col border border-rule">
+      <figcaption className="border-b border-rule px-4 py-2.5 font-mono text-[11.5px] text-muted">{caption}</figcaption>
+      <pre className="flex-1 overflow-x-auto bg-panel p-4 font-mono text-[12.5px] leading-relaxed text-ink">{code}</pre>
+    </figure>
+  );
+}
+
+function Quickstart() {
+  return (
+    <Section id="quickstart" n="05" label="Quickstart"
+      title="Python 3.12, Docker, and any model you have."
+      lede="A free Groq or Gemini key works, as does a local Ollama model or an Anthropic or OpenAI key. The provider is one line in .env. Without Docker the scanner stops with a clear error instead of reporting that it found nothing.">
+      <div className="mt-10">
+        <CodeBlock caption="terminal" code={QUICKSTART} />
+      </div>
+      <p className="mt-6 max-w-[66ch] text-[15px] leading-[1.65] text-body">
+        A scan writes a self-contained HTML report with no script and no external requests, JSON, and
+        SARIF 2.1.0 for GitHub code scanning. Only line-proven findings are errors, and only they can fail
+        a build; class-only findings are warnings. Exit codes separate a failing finding (1) from bad
+        input (2), no Docker (3), an exhausted quota (4) and a refused model request (5).{" "}
+        <a className="text-ink underline" href={`${REPO}#command-line-options`} target="_blank" rel="noopener noreferrer">
+          All options
+        </a>.
+      </p>
       <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         <figure className="min-w-0 border border-rule">
           <img src="./report-preview.png" loading="lazy" className="block w-full"
@@ -394,13 +438,45 @@ function Usage() {
             <a className="text-ink underline" href="./sample-report.html">Open it</a>.
           </figcaption>
         </figure>
-        <figure className="flex min-w-0 flex-col border border-rule">
-          <figcaption className="border-b border-rule px-4 py-2.5 font-mono text-[11.5px] text-muted">
-            .github/workflows/security.yml · excerpt
-          </figcaption>
-          <pre className="flex-1 overflow-x-auto bg-panel p-4 font-mono text-[12.5px] leading-relaxed text-ink">{CI_SNIPPET}</pre>
-        </figure>
+        <CodeBlock caption=".github/workflows/security.yml · excerpt" code={CI_SNIPPET} />
       </div>
+    </Section>
+  );
+}
+
+/* ------------------------------------------------------------ engineering */
+
+function Engineering() {
+  return (
+    <Section id="engineering" n="06" label="Engineering"
+      title="Tested at the boundaries where it could lie."
+      lede="Most tests stub the model and the container, and assert on how each was called, not only on what came back. That rule exists because of a real bug: the validator once never mounted the target, every exploit died on import, and every stubbed test still passed.">
+      <ol className="mt-10 grid gap-px border border-rule bg-rule sm:grid-cols-2 lg:grid-cols-3">
+        {CI_JOBS.map((j, i) => (
+          <li key={j.name} className="bg-paper p-5">
+            <p className="font-mono text-[12px] text-muted">CI · {String(i + 1).padStart(2, "0")}</p>
+            <h3 className="mt-1 text-[16px] font-semibold text-ink">{j.name}</h3>
+            <p className="mt-2 text-[14px] leading-[1.6] text-body">{j.body}</p>
+          </li>
+        ))}
+      </ol>
+
+      <p className="mt-8 max-w-[66ch] text-[15px] leading-[1.65] text-body">
+        The witness tests go furthest. They execute the real tracing harness in a subprocess against a real
+        target file, and run each known forgery through it: a record printed before an early exit, a tampered
+        hit set, a rewritten stdout. None of them may produce a line proof. Every bug fix ships with a
+        regression test that fails when the fix is reverted.
+      </p>
+
+      <h3 className="mt-14 text-[20px] font-semibold text-ink">Stack</h3>
+      <dl className="mt-5 divide-y divide-rule border-y border-rule text-[15px]">
+        {STACK.map(([k, v]) => (
+          <div key={k} className="grid gap-1 py-3 sm:grid-cols-[160px_minmax(0,1fr)] sm:gap-4">
+            <dt className="font-mono text-[12.5px] uppercase tracking-[.08em] text-muted sm:leading-[1.6rem]">{k}</dt>
+            <dd className="text-body">{v}</dd>
+          </div>
+        ))}
+      </dl>
     </Section>
   );
 }
@@ -409,7 +485,7 @@ function Usage() {
 
 function Limits() {
   return (
-    <Section id="limits" n="06" label="Limits" title="What it does not do.">
+    <Section id="limits" n="07" label="Limits" title="What it does not do, and what went wrong.">
       <ol className="mt-8 divide-y divide-rule border-y border-rule">
         {LIMITS.map((l, i) => (
           <li key={l} className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 py-4 text-[15px] leading-[1.6] text-body">
@@ -428,12 +504,14 @@ function Footer() {
       <div className="mx-auto flex max-w-page flex-wrap items-baseline justify-between gap-4 px-4 py-10 text-[14px] sm:px-8">
         <p className="text-muted">
           <span className="font-mono font-semibold tracking-[.14em] text-ink">SENTINEL</span>{" "}
-          · Rahul Paul · MIT licensed
+          · designed and built by{" "}
+          <a className="text-ink underline" href="https://github.com/rahulpaul-07" target="_blank" rel="noopener noreferrer">Rahul Paul</a>
+          {" "}· MIT licensed
         </p>
         <div className="flex gap-5">
           <a className="text-body hover:text-ink" href={REPO} target="_blank" rel="noopener noreferrer">Source</a>
-          <a className="text-body hover:text-ink" href={`${REPO}#quickstart`} target="_blank" rel="noopener noreferrer">Quickstart</a>
-          <a className="text-body hover:text-ink" href="https://github.com/rahulpaul-07" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a className="text-body hover:text-ink" href={`${REPO}/blob/master/CHANGELOG.md`} target="_blank" rel="noopener noreferrer">Changelog</a>
+          <a className="text-body hover:text-ink" href={`${REPO}/blob/master/SECURITY.md`} target="_blank" rel="noopener noreferrer">Security policy</a>
         </div>
       </div>
     </footer>
@@ -448,9 +526,10 @@ export default function App() {
         <Hero />
         <Problem />
         <Method />
-        <Hardening />
         <Results />
-        <Usage />
+        <Hardening />
+        <Quickstart />
+        <Engineering />
         <Limits />
       </main>
       <Footer />
