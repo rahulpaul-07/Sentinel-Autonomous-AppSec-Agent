@@ -21,3 +21,5 @@ out.json
 
 # CVE benchmark checkouts
 .cve-cache/
+
+.claude/
